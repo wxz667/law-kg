@@ -1,0 +1,31 @@
+{
+  "graph_artifact": "graph.bundle.json",
+  "node_types": [
+    "DocumentNode",
+    "TocNode",
+    "ProvisionNode",
+    "EntityNode",
+    "AppendixNode",
+    "AppendixItemNode"
+  ],
+  "edge_types": [
+    "HAS_PART",
+    "HAS_CHAPTER",
+    "HAS_SECTION",
+    "HAS_ARTICLE",
+    "HAS_APPENDIX",
+    "HAS_PARAGRAPH",
+    "HAS_ITEM",
+    "HAS_APPENDIX_ITEM",
+    "HAS_SUB_ITEM",
+    "HAS_ENTITY",
+    "HAS_SUBORDINATE",
+    "SECTION_RELATED",
+    "ENTITY_RELATED",
+    "CONDITION_OF",
+    "PENALTY_OF",
+    "EXCEPTION_TO",
+    "REFERENCE_TO",
+    "SAME_AS"
+  ]
+}

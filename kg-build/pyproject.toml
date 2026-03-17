@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kg-build"
+version = "0.1.0"
+description = "Delivery-grade Tree-KG build framework for Criminal Law knowledge graph construction."
+requires-python = ">=3.10"
+dependencies = [
+  "python-docx==1.2.0"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

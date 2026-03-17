@@ -1,0 +1,30 @@
+{
+  "summarize": {
+    "status": "todo",
+    "description": "TODO: connect a production summarization model."
+  },
+  "extract": {
+    "status": "todo",
+    "description": "TODO: connect a production legal extraction model."
+  },
+  "aggr": {
+    "status": "todo",
+    "description": "TODO: connect a production aggregation model."
+  },
+  "conv": {
+    "status": "todo",
+    "description": "TODO: connect a production contextual convolution model."
+  },
+  "embed": {
+    "status": "todo",
+    "description": "TODO: connect a production embedding model."
+  },
+  "dedup": {
+    "status": "todo",
+    "description": "TODO: connect a production deduplication model."
+  },
+  "pred": {
+    "status": "todo",
+    "description": "TODO: connect a production edge prediction model."
+  }
+}
