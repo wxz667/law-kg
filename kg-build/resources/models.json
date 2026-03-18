@@ -1,30 +1,98 @@
 {
   "summarize": {
-    "status": "todo",
-    "description": "TODO: connect a production summarization model."
+    "provider": "openai_compatible",
+    "purpose": "summarize",
+    "model": "glm-4-air",
+    "base_url_env": "OPENAI_BASE_URL_SUMMARIZE",
+    "api_key_env": "OPENAI_API_KEY_SUMMARIZE",
+    "model_env": "OPENAI_MODEL_SUMMARIZE",
+    "params": {
+      "temperature": 0.2,
+      "max_tokens": 256,
+      "timeout_seconds": 60,
+      "max_retries": 2
+    }
   },
   "extract": {
-    "status": "todo",
-    "description": "TODO: connect a production legal extraction model."
+    "provider": "openai_compatible",
+    "purpose": "extract",
+    "model": "deepseek-v3",
+    "base_url_env": "OPENAI_BASE_URL_EXTRACT",
+    "api_key_env": "OPENAI_API_KEY_EXTRACT",
+    "model_env": "OPENAI_MODEL_EXTRACT",
+    "params": {
+      "temperature": 0.1,
+      "max_tokens": 2048,
+      "timeout_seconds": 90,
+      "max_retries": 2
+    }
   },
   "aggr": {
-    "status": "todo",
-    "description": "TODO: connect a production aggregation model."
+    "provider": "openai_compatible",
+    "purpose": "judge",
+    "model": "deepseek-v3",
+    "base_url_env": "OPENAI_BASE_URL_AGGR",
+    "api_key_env": "OPENAI_API_KEY_AGGR",
+    "model_env": "OPENAI_MODEL_AGGR",
+    "params": {
+      "temperature": 0.1,
+      "max_tokens": 1024,
+      "timeout_seconds": 90,
+      "max_retries": 2
+    }
   },
   "conv": {
-    "status": "todo",
-    "description": "TODO: connect a production contextual convolution model."
+    "provider": "openai_compatible",
+    "purpose": "generate",
+    "model": "deepseek-v3",
+    "base_url_env": "OPENAI_BASE_URL_CONV",
+    "api_key_env": "OPENAI_API_KEY_CONV",
+    "model_env": "OPENAI_MODEL_CONV",
+    "params": {
+      "temperature": 0.2,
+      "max_tokens": 2048,
+      "timeout_seconds": 90,
+      "max_retries": 2
+    }
   },
   "embed": {
-    "status": "todo",
-    "description": "TODO: connect a production embedding model."
+    "provider": "openai_compatible",
+    "purpose": "embed",
+    "model": "text-embedding-3-large",
+    "base_url_env": "OPENAI_BASE_URL_EMBED",
+    "api_key_env": "OPENAI_API_KEY_EMBED",
+    "model_env": "OPENAI_EMBEDDING_MODEL",
+    "params": {
+      "timeout_seconds": 60,
+      "max_retries": 2
+    }
   },
   "dedup": {
-    "status": "todo",
-    "description": "TODO: connect a production deduplication model."
+    "provider": "openai_compatible",
+    "purpose": "judge",
+    "model": "deepseek-v3",
+    "base_url_env": "OPENAI_BASE_URL_DEDUP",
+    "api_key_env": "OPENAI_API_KEY_DEDUP",
+    "model_env": "OPENAI_MODEL_DEDUP",
+    "params": {
+      "temperature": 0.0,
+      "max_tokens": 512,
+      "timeout_seconds": 90,
+      "max_retries": 2
+    }
   },
   "pred": {
-    "status": "todo",
-    "description": "TODO: connect a production edge prediction model."
+    "provider": "openai_compatible",
+    "purpose": "judge",
+    "model": "deepseek-v3",
+    "base_url_env": "OPENAI_BASE_URL_PRED",
+    "api_key_env": "OPENAI_API_KEY_PRED",
+    "model_env": "OPENAI_MODEL_PRED",
+    "params": {
+      "temperature": 0.0,
+      "max_tokens": 1024,
+      "timeout_seconds": 90,
+      "max_retries": 2
+    }
   }
 }

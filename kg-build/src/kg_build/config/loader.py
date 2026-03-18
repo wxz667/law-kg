@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from ..common import project_root
+from ..llm.config import resolve_all_stage_models
 
 
 def resources_root() -> Path:
@@ -36,6 +38,6 @@ def snapshot_config() -> dict[str, Any]:
     return {
         "schema": load_schema(),
         "regex_patterns": load_regex_patterns(),
-        "models": load_models(),
+        "models": resolve_all_stage_models(env=dict(os.environ)),
         "thresholds": load_thresholds(),
     }
