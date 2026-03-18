@@ -8,6 +8,70 @@
     "AppendixNode",
     "AppendixItemNode"
   ],
+  "node_type_fields": {
+    "DocumentNode": [
+      "id",
+      "type",
+      "name",
+      "level",
+      "source_id",
+      "metadata"
+    ],
+    "TocNode": [
+      "id",
+      "type",
+      "name",
+      "level",
+      "source_id",
+      "summary",
+      "address",
+      "metadata"
+    ],
+    "ProvisionNode": [
+      "id",
+      "type",
+      "name",
+      "level",
+      "source_id",
+      "text",
+      "summary",
+      "address",
+      "metadata"
+    ],
+    "EntityNode": [
+      "id",
+      "type",
+      "name",
+      "level",
+      "source_id",
+      "summary",
+      "description",
+      "embedding_ref",
+      "metadata"
+    ],
+    "AppendixNode": [
+      "id",
+      "type",
+      "name",
+      "level",
+      "source_id",
+      "text",
+      "summary",
+      "address",
+      "metadata"
+    ],
+    "AppendixItemNode": [
+      "id",
+      "type",
+      "name",
+      "level",
+      "source_id",
+      "text",
+      "summary",
+      "address",
+      "metadata"
+    ]
+  },
   "edge_types": [
     "HAS_PART",
     "HAS_CHAPTER",
