@@ -12,44 +12,40 @@ from ..common import (
 )
 from ..contracts import EdgeRecord, GraphBundle, NodeRecord, SourceDocumentRecord
 
-
-LEVEL_TO_EDGE = {
-    "part": "HAS_PART",
-    "chapter": "HAS_CHAPTER",
-    "section": "HAS_SECTION",
-    "article": "HAS_ARTICLE",
-    "appendix": "HAS_APPENDIX",
-    "paragraph": "HAS_PARAGRAPH",
-    "item": "HAS_ITEM",
-    "sub_item": "HAS_SUB_ITEM",
-}
-
-LEVEL_ORDER = [
-    "document",
-    "part",
-    "chapter",
-    "section",
-    "article",
-    "appendix",
-    "paragraph",
-    "item",
-    "sub_item",
-]
+from ..config import load_schema
 
 ARTICLE_LABEL_RE = re.compile(
     r"^(第[一二三四五六七八九十百千万零两〇0-9]+条(?:之[一二三四五六七八九十百千万零两〇0-9]+)?)(.*)$"
 )
 
+SEGMENT_REGEX_PATTERNS: dict[str, str] = {
+    "part": r"^第[一二三四五六七八九十百零]+编\s+.+$",
+    "chapter": r"^第[一二三四五六七八九十百零]+章\s+.+$",
+    "section": r"^第[一二三四五六七八九十百零]+节\s+.+$",
+    "article": r"^第[一二三四五六七八九十百千万零两〇0-9]+条(?:之[一二三四五六七八九十百千万零两〇0-9]+)?\s+.+$",
+    "appendix_heading": r"^附件([一二三四五六七八九十百千万零两〇0-9]+)$",
+    "appendix_item_marker": r"^([0-9０-９]+)[.．](.+)$",
+    "item_marker": r"（[一二三四五六七八九十]+）",
+    "sub_item_marker": r"(?:(?<=^)|(?<=\s)|(?<=；)|(?<=：)|(?<=:))([0-9０-９]+)[.．]",
+}
 
-def run(source_document: SourceDocumentRecord, regex_patterns: dict[str, str]) -> GraphBundle:
-    regexes = {name: re.compile(pattern) for name, pattern in regex_patterns.items()}
+STRUCTURAL_EDGES = {
+    (item["parent_level"], item["child_level"]): item["edge_type"]
+    for item in load_schema().get("structural_edges", [])
+}
+LEVEL_ORDER = load_schema().get("levels", [])
+LEVEL_TO_NODE_TYPE = load_schema().get("level_to_node_type", {})
+
+
+def run(source_document: SourceDocumentRecord) -> GraphBundle:
+    regexes = {name: re.compile(pattern) for name, pattern in SEGMENT_REGEX_PATTERNS.items()}
 
     nodes: list[NodeRecord] = []
     edges: list[EdgeRecord] = []
     counters = {"part": 0, "chapter": 0, "section": 0}
     document_node = NodeRecord(
         id=f"document:{slugify(source_document.source_id)}",
-        type="DocumentNode",
+        type=LEVEL_TO_NODE_TYPE["document"],
         name=source_document.title,
         level="document",
         source_id=source_document.source_id,
@@ -79,7 +75,7 @@ def run(source_document: SourceDocumentRecord, regex_patterns: dict[str, str]) -
                 article_node, inline_text = build_article_node(source_document.source_id, line)
                 parent = find_parent(level_stack, level)
                 nodes.append(article_node)
-                edges.append(build_edge(parent.id, article_node.id, LEVEL_TO_EDGE[level]))
+                edges.append(build_edge(parent.id, article_node.id, structural_edge_type(parent.level, level)))
                 level_stack[level] = article_node
                 clear_lower_levels(level_stack, level)
                 current_article = article_node
@@ -89,7 +85,7 @@ def run(source_document: SourceDocumentRecord, regex_patterns: dict[str, str]) -
             counters[level] += 1
             toc_node = NodeRecord(
                 id=f"{level}:{slugify(source_document.source_id)}:{counters[level]:02d}",
-                type="TocNode",
+                type=LEVEL_TO_NODE_TYPE[level],
                 name=line,
                 level=level,
                 source_id=source_document.source_id,
@@ -102,7 +98,7 @@ def run(source_document: SourceDocumentRecord, regex_patterns: dict[str, str]) -
             )
             parent = find_parent(level_stack, level)
             nodes.append(toc_node)
-            edges.append(build_edge(parent.id, toc_node.id, LEVEL_TO_EDGE[level]))
+            edges.append(build_edge(parent.id, toc_node.id, structural_edge_type(parent.level, level)))
             level_stack[level] = toc_node
             clear_lower_levels(level_stack, level)
             continue
@@ -153,7 +149,7 @@ def build_article_node(source_id: str, line: str) -> tuple[NodeRecord, str]:
     article_key = format_article_key(article_no, article_suffix)
     node = NodeRecord(
         id=f"article:{slugify(source_id)}:{article_key}",
-        type="ProvisionNode",
+        type=LEVEL_TO_NODE_TYPE["article"],
         name=article_label,
         level="article",
         source_id=source_id,
@@ -189,7 +185,7 @@ def finalize_article(
             # 单段正文内出现成组列举项时，仍显式生成“第一款”，保持法条引用口径稳定。
             paragraph_node = NodeRecord(
                 id=f"paragraph:{slugify(article_node.source_id)}:{article_key}:01",
-                type="ProvisionNode",
+                type=LEVEL_TO_NODE_TYPE["paragraph"],
                 name=build_paragraph_name(article_node.name, 1),
                 level="paragraph",
                 source_id=article_node.source_id,
@@ -197,7 +193,13 @@ def finalize_article(
                 metadata={"parent_article_id": article_node.id},
             )
             nodes.append(paragraph_node)
-            edges.append(build_edge(article_node.id, paragraph_node.id, "HAS_PARAGRAPH"))
+            edges.append(
+                build_edge(
+                    article_node.id,
+                    paragraph_node.id,
+                    structural_edge_type(article_node.level, paragraph_node.level),
+                )
+            )
             attach_text_hierarchy(
                 nodes=nodes,
                 edges=edges,
@@ -230,7 +232,7 @@ def finalize_article(
     for paragraph_index, paragraph_source_text in enumerate(paragraph_texts, start=1):
         paragraph_node = NodeRecord(
             id=f"paragraph:{slugify(article_node.source_id)}:{article_key}:{paragraph_index:02d}",
-            type="ProvisionNode",
+            type=LEVEL_TO_NODE_TYPE["paragraph"],
             name=build_paragraph_name(article_node.name, paragraph_index),
             level="paragraph",
             source_id=article_node.source_id,
@@ -238,7 +240,13 @@ def finalize_article(
             metadata={"parent_article_id": article_node.id},
         )
         nodes.append(paragraph_node)
-        edges.append(build_edge(article_node.id, paragraph_node.id, "HAS_PARAGRAPH"))
+        edges.append(
+            build_edge(
+                article_node.id,
+                paragraph_node.id,
+                structural_edge_type(article_node.level, paragraph_node.level),
+            )
+        )
         attach_text_hierarchy(
             nodes=nodes,
             edges=edges,
@@ -297,7 +305,7 @@ def attach_text_hierarchy(
         item_name = build_item_name(parent_node.name, item_index)
         item_node = NodeRecord(
             id=build_item_id(article_node.source_id, article_key, paragraph_no, item_index),
-            type="ProvisionNode",
+            type=LEVEL_TO_NODE_TYPE["item"],
             name=item_name,
             level="item",
             source_id=article_node.source_id,
@@ -309,7 +317,13 @@ def attach_text_hierarchy(
             },
         )
         nodes.append(item_node)
-        edges.append(build_edge(parent_node.id, item_node.id, "HAS_ITEM"))
+        edges.append(
+            build_edge(
+                parent_node.id,
+                item_node.id,
+                structural_edge_type(parent_node.level, item_node.level),
+            )
+        )
 
         for sub_item_index, sub_item_source_text in enumerate(sub_item_segments, start=1):
             sub_item_marker_text, sub_item_body_text = extract_sub_item_marker(sub_item_source_text)
@@ -322,7 +336,7 @@ def attach_text_hierarchy(
                     item_index,
                     sub_item_index,
                 ),
-                type="ProvisionNode",
+                type=LEVEL_TO_NODE_TYPE["sub_item"],
                 name=sub_item_name,
                 level="sub_item",
                 source_id=article_node.source_id,
@@ -334,7 +348,13 @@ def attach_text_hierarchy(
                 },
             )
             nodes.append(sub_item_node)
-            edges.append(build_edge(item_node.id, sub_item_node.id, "HAS_SUB_ITEM"))
+            edges.append(
+                build_edge(
+                    item_node.id,
+                    sub_item_node.id,
+                    structural_edge_type(item_node.level, sub_item_node.level),
+                )
+            )
 
 
 def finalize_appendix(
@@ -350,7 +370,7 @@ def finalize_appendix(
     appendix_key = f"{appendix_no:02d}"
     appendix_node = NodeRecord(
         id=f"appendix:{slugify(source_id)}:{appendix_key}",
-        type="AppendixNode",
+        type=LEVEL_TO_NODE_TYPE["appendix"],
         name=appendix_label,
         level="appendix",
         source_id=source_id,
@@ -358,7 +378,13 @@ def finalize_appendix(
         metadata={"appendix_label": appendix_label},
     )
     nodes.append(appendix_node)
-    edges.append(build_edge(document_node.id, appendix_node.id, "HAS_APPENDIX"))
+    edges.append(
+        build_edge(
+            document_node.id,
+            appendix_node.id,
+            structural_edge_type(document_node.level, appendix_node.level),
+        )
+    )
 
     intro_lines: list[str] = []
     appendix_items: list[tuple[int, str]] = []
@@ -389,7 +415,7 @@ def finalize_appendix(
     for item_no, item_text in appendix_items:
         appendix_item_node = NodeRecord(
             id=f"appendix_item:{slugify(source_id)}:{appendix_key}:{item_no:02d}",
-            type="AppendixItemNode",
+            type=LEVEL_TO_NODE_TYPE["appendix_item"],
             name=f"{appendix_label}第{item_no}项",
             level="appendix_item",
             source_id=source_id,
@@ -401,7 +427,13 @@ def finalize_appendix(
             },
         )
         nodes.append(appendix_item_node)
-        edges.append(build_edge(appendix_node.id, appendix_item_node.id, "HAS_APPENDIX_ITEM"))
+        edges.append(
+            build_edge(
+                appendix_node.id,
+                appendix_item_node.id,
+                structural_edge_type(appendix_node.level, appendix_item_node.level),
+            )
+        )
 
 
 def add_appendix_references(
@@ -604,3 +636,10 @@ def build_edge(source_id: str, target_id: str, edge_type: str) -> EdgeRecord:
         target=target_id,
         type=edge_type,
     )
+
+
+def structural_edge_type(parent_level: str, child_level: str) -> str:
+    key = (parent_level, child_level)
+    if key not in STRUCTURAL_EDGES:
+        raise ValueError(f"Missing structural edge rule in schema: {parent_level} -> {child_level}")
+    return STRUCTURAL_EDGES[key]

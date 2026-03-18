@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..common import build_id_from_source, repo_root, timestamp_utc
-from ..config import load_regex_patterns, snapshot_config
+from ..config import snapshot_config
 from ..contracts import BuildManifest, GraphBundle, StageRecord
 from ..io import (
     read_graph_bundle,
@@ -105,7 +105,7 @@ def build_knowledge_graph(
             segment_stage = build_reused_stage_record("segment", segment_dir, segment_artifact)
         else:
             ingested_source = read_source_document_json(ingest_artifact)
-            bundle = run_segment(ingested_source, load_regex_patterns())
+            bundle = run_segment(ingested_source)
             segment_stage = StageRecord(
                 name="segment",
                 status="completed",

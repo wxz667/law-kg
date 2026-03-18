@@ -1017,6 +1017,7 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 - `contracts/`
 - `config/`
 - `io/`
+- `llm/`
 - `pipeline/`
 - `stages/`
 - `cli.py`
@@ -1046,46 +1047,36 @@ PYTHONPATH=src /home/zephyr/law-kg/.venv/bin/python -m kg_build.cli build \
 
 外部配置项包括：
 
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `OPENAI_API_KEY_SUMMARIZE`
-- `OPENAI_BASE_URL_SUMMARIZE`
-- `OPENAI_MODEL_SUMMARIZE`
-- `OPENAI_API_KEY_EXTRACT`
-- `OPENAI_BASE_URL_EXTRACT`
-- `OPENAI_MODEL_EXTRACT`
-- `OPENAI_API_KEY_AGGR`
-- `OPENAI_BASE_URL_AGGR`
-- `OPENAI_MODEL_AGGR`
-- `OPENAI_API_KEY_CONV`
-- `OPENAI_BASE_URL_CONV`
-- `OPENAI_MODEL_CONV`
-- `OPENAI_API_KEY_EMBED`
-- `OPENAI_BASE_URL_EMBED`
-- `OPENAI_EMBEDDING_MODEL`
-- `OPENAI_API_KEY_DEDUP`
-- `OPENAI_BASE_URL_DEDUP`
-- `OPENAI_MODEL_DEDUP`
-- `OPENAI_API_KEY_PRED`
-- `OPENAI_BASE_URL_PRED`
-- `OPENAI_MODEL_PRED`
+- `kg-build/resources/models.json`
+- `BIGMODEL_API_KEY`
+- `DEEPSEEK_API_KEY`
+- `DEEPSEEK_BASE_URL`
 - `NEO4J_URI`
 - `NEO4J_USER`
 - `NEO4J_PASSWORD`
 
 配置模板：
 
+- [kg-build/resources/models.json](/home/zephyr/law-kg/kg-build/resources/models.json)
 - [.env.example](/home/zephyr/law-kg/.env.example)
 
 说明：
 
-- LLM 与 embedding 配置用于后续接入语义阶段
-- 全局 `OPENAI_API_KEY` 与 `OPENAI_BASE_URL` 作为默认回退
-- 各阶段可通过独立的 `OPENAI_API_KEY_<STAGE>`、`OPENAI_BASE_URL_<STAGE>`、`OPENAI_MODEL_<STAGE>` 接入不同厂商或不同网关
+- `kg-build/resources/models.json` 只定义阶段到 `provider/model/purpose/params` 的路由
+- LLM 厂商接入参数由 `.env` 提供，并且只允许 `infra/llm` 读取
+- `kg_build/llm` 不得直接读取 `.env`，也不得持有 `api_key`、`base_url` 等厂商接入字段
+- `kg_build/llm/` 负责阶段模型路由与算法侧调用 facade
+- 与算法强相关的 prompt、任务语义、结果校验应放在对应 `stages/` 模块内
+- `infra/llm/` 负责明确厂商的 SDK 或 API 适配，不承载任何阶段语义
+- 厂商接入参数应由对应厂商包各自读取和校验；通用层只负责 provider 路由，不统一假定所有厂商都需要相同参数
+- provider 命名必须使用明确厂商或平台语义，如 `bigmodel`、`deepseek`、`openrouter`；不得使用 `openai_compatible` 这类笼统兼容名
+- 系统不提供隐式 fallback 或降级策略；阶段路由缺失、厂商接入参数缺失时必须立即报错退出
+- `.env.example` 保留基础设施参数模板与厂商级 LLM 接入变量模板，不暴露阶段级变量
 - Neo4j 仅用于未来导入、展示与产品交付
 
 可选下游：
 
+- `infra/llm/`
 - `infra/neo4j/`
 
 核心 pipeline 不依赖 Neo4j。

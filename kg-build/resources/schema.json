@@ -1,5 +1,4 @@
 {
-  "graph_artifact": "graph.bundle.json",
   "node_types": [
     "DocumentNode",
     "TocNode",
@@ -8,6 +7,30 @@
     "AppendixNode",
     "AppendixItemNode"
   ],
+  "levels": [
+    "document",
+    "part",
+    "chapter",
+    "section",
+    "article",
+    "appendix",
+    "paragraph",
+    "item",
+    "sub_item",
+    "appendix_item"
+  ],
+  "level_to_node_type": {
+    "document": "DocumentNode",
+    "part": "TocNode",
+    "chapter": "TocNode",
+    "section": "TocNode",
+    "article": "ProvisionNode",
+    "appendix": "AppendixNode",
+    "paragraph": "ProvisionNode",
+    "item": "ProvisionNode",
+    "sub_item": "ProvisionNode",
+    "appendix_item": "AppendixItemNode"
+  },
   "node_type_fields": {
     "DocumentNode": [
       "id",
@@ -91,5 +114,130 @@
     "EXCEPTION_TO",
     "REFERENCE_TO",
     "SAME_AS"
-  ]
+  ],
+  "edge_type_categories": {
+    "HAS_PART": "structural",
+    "HAS_CHAPTER": "structural",
+    "HAS_SECTION": "structural",
+    "HAS_ARTICLE": "structural",
+    "HAS_APPENDIX": "structural",
+    "HAS_PARAGRAPH": "structural",
+    "HAS_ITEM": "structural",
+    "HAS_APPENDIX_ITEM": "structural",
+    "HAS_SUB_ITEM": "structural",
+    "HAS_ENTITY": "structural",
+    "HAS_SUBORDINATE": "structural",
+    "SECTION_RELATED": "weak_semantic",
+    "ENTITY_RELATED": "weak_semantic",
+    "CONDITION_OF": "explicit_semantic",
+    "PENALTY_OF": "explicit_semantic",
+    "EXCEPTION_TO": "explicit_semantic",
+    "REFERENCE_TO": "explicit_semantic",
+    "SAME_AS": "explicit_semantic"
+  },
+  "structural_edges": [
+    {
+      "parent_level": "document",
+      "child_level": "part",
+      "edge_type": "HAS_PART"
+    },
+    {
+      "parent_level": "part",
+      "child_level": "chapter",
+      "edge_type": "HAS_CHAPTER"
+    },
+    {
+      "parent_level": "chapter",
+      "child_level": "section",
+      "edge_type": "HAS_SECTION"
+    },
+    {
+      "parent_level": "document",
+      "child_level": "article",
+      "edge_type": "HAS_ARTICLE"
+    },
+    {
+      "parent_level": "part",
+      "child_level": "article",
+      "edge_type": "HAS_ARTICLE"
+    },
+    {
+      "parent_level": "chapter",
+      "child_level": "article",
+      "edge_type": "HAS_ARTICLE"
+    },
+    {
+      "parent_level": "section",
+      "child_level": "article",
+      "edge_type": "HAS_ARTICLE"
+    },
+    {
+      "parent_level": "document",
+      "child_level": "appendix",
+      "edge_type": "HAS_APPENDIX"
+    },
+    {
+      "parent_level": "article",
+      "child_level": "paragraph",
+      "edge_type": "HAS_PARAGRAPH"
+    },
+    {
+      "parent_level": "article",
+      "child_level": "item",
+      "edge_type": "HAS_ITEM"
+    },
+    {
+      "parent_level": "paragraph",
+      "child_level": "item",
+      "edge_type": "HAS_ITEM"
+    },
+    {
+      "parent_level": "item",
+      "child_level": "sub_item",
+      "edge_type": "HAS_SUB_ITEM"
+    },
+    {
+      "parent_level": "appendix",
+      "child_level": "appendix_item",
+      "edge_type": "HAS_APPENDIX_ITEM"
+    }
+  ],
+  "allowed_outgoing_edges": {
+    "DocumentNode": [
+      "HAS_PART",
+      "HAS_ARTICLE",
+      "HAS_APPENDIX"
+    ],
+    "TocNode": [
+      "HAS_CHAPTER",
+      "HAS_SECTION",
+      "HAS_ARTICLE"
+    ],
+    "ProvisionNode": [
+      "HAS_PARAGRAPH",
+      "HAS_ITEM",
+      "HAS_SUB_ITEM",
+      "HAS_ENTITY",
+      "HAS_SUBORDINATE",
+      "SECTION_RELATED",
+      "ENTITY_RELATED",
+      "CONDITION_OF",
+      "PENALTY_OF",
+      "EXCEPTION_TO",
+      "REFERENCE_TO",
+      "SAME_AS"
+    ],
+    "EntityNode": [
+      "HAS_SUBORDINATE",
+      "ENTITY_RELATED",
+      "CONDITION_OF",
+      "PENALTY_OF",
+      "EXCEPTION_TO",
+      "SAME_AS"
+    ],
+    "AppendixNode": [
+      "HAS_APPENDIX_ITEM"
+    ],
+    "AppendixItemNode": []
+  }
 }
