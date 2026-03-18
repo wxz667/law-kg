@@ -17,7 +17,8 @@
     "paragraph",
     "item",
     "sub_item",
-    "appendix_item"
+    "appendix_item",
+    "entity"
   ],
   "level_to_node_type": {
     "document": "DocumentNode",
@@ -29,7 +30,8 @@
     "paragraph": "ProvisionNode",
     "item": "ProvisionNode",
     "sub_item": "ProvisionNode",
-    "appendix_item": "AppendixItemNode"
+    "appendix_item": "AppendixItemNode",
+    "entity": "EntityNode"
   },
   "node_type_fields": {
     "DocumentNode": [
@@ -125,8 +127,8 @@
     "HAS_ITEM": "structural",
     "HAS_APPENDIX_ITEM": "structural",
     "HAS_SUB_ITEM": "structural",
-    "HAS_ENTITY": "structural",
-    "HAS_SUBORDINATE": "structural",
+    "HAS_ENTITY": "explicit_semantic",
+    "HAS_SUBORDINATE": "explicit_semantic",
     "SECTION_RELATED": "weak_semantic",
     "ENTITY_RELATED": "weak_semantic",
     "CONDITION_OF": "explicit_semantic",
@@ -236,8 +238,23 @@
       "SAME_AS"
     ],
     "AppendixNode": [
-      "HAS_APPENDIX_ITEM"
+      "HAS_APPENDIX_ITEM",
+      "HAS_ENTITY",
+      "ENTITY_RELATED",
+      "CONDITION_OF",
+      "PENALTY_OF",
+      "EXCEPTION_TO",
+      "REFERENCE_TO",
+      "SAME_AS"
     ],
-    "AppendixItemNode": []
+    "AppendixItemNode": [
+      "HAS_ENTITY",
+      "ENTITY_RELATED",
+      "CONDITION_OF",
+      "PENALTY_OF",
+      "EXCEPTION_TO",
+      "REFERENCE_TO",
+      "SAME_AS"
+    ]
   }
 }

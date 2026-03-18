@@ -4,7 +4,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from ..common import repo_root
+from ..utils.ids import repo_root
 from .config import StageModelConfig
 
 
@@ -15,6 +15,8 @@ class LLMError(RuntimeError):
 @dataclass
 class LLMClient:
     config: StageModelConfig
+
+    NON_PROVIDER_PARAMS = {"batch_size", "concurrency"}
 
     def generate_text(
         self,
@@ -48,6 +50,8 @@ class LLMClient:
     def _merged_params(self, runtime_params: dict[str, Any]) -> dict[str, Any]:
         merged = dict(self.config.params)
         merged.update(runtime_params)
+        for key in self.NON_PROVIDER_PARAMS:
+            merged.pop(key, None)
         return merged
 
     def _provider_client(self) -> Any:
@@ -60,7 +64,7 @@ class LLMClient:
         config = ProviderRequestConfig(
             provider=self.config.provider,
             model=self.config.model,
-            params=dict(self.config.params),
+            params=self._merged_params({}),
         )
         return build_provider_client(config)
 

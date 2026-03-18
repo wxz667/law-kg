@@ -103,6 +103,11 @@ Tree-KG 的核心方法分为两个阶段：
 - `data/intermediate/08_dedup/`
 - `data/intermediate/09_pred/`
 
+阶段执行 sidecar：
+
+- `checkpoint.json`
+- `task_results.jsonl`
+
 最终产物目录：
 
 - `data/graph/graph.bundle.json`
@@ -110,6 +115,11 @@ Tree-KG 的核心方法分为两个阶段：
 构建记录：
 
 - `data/manifest/build_manifest.json`
+
+说明：
+
+- `checkpoint.json` 与 `task_results.jsonl` 仅用于高成本 LLM 阶段的阶段内断点续跑
+- 这两类文件不是规范主产物，阶段成功完成后应清理
 
 ### 4.3 主存储策略
 
@@ -243,7 +253,7 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 - `text`
   结构文本类字段，用于承载规范原文或附录正文
 - `summary`
-  聚合摘要类字段，用于连接结构层与语义层
+  聚合摘要类字段，用于承载非叶子结构节点的聚合语义表示
 - `description`
   实体语义描述字段，用于实体定义与上下文增强
 - `embedding_ref`
@@ -254,7 +264,7 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 唯一归属如下：
 
 - `text`：`ProvisionNode`、`AppendixNode`、`AppendixItemNode`
-- `summary`：`TocNode`、`ProvisionNode`、`AppendixNode`、可选 `AppendixItemNode`、可选 `EntityNode`
+- `summary`：`TocNode`、`ProvisionNode`、`AppendixNode`、可选 `EntityNode`
 - `description`：仅 `EntityNode`
 - `embedding_ref`：仅 `EntityNode`
 - `address`：`TocNode`、`ProvisionNode`、`AppendixNode`、`AppendixItemNode`
@@ -333,7 +343,7 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 
 - 表示条、款、项、目等规范单元
 - `text` 是唯一规范依据
-- `summary` 用于抽取前压缩和结构层到语义层的桥接
+- `summary` 仅用于非叶子规范节点的聚合语义表示，不要求所有 `ProvisionNode` 都生成
 
 正文承载规则：
 
@@ -489,8 +499,6 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 - `HAS_ITEM`
 - `HAS_APPENDIX_ITEM`
 - `HAS_SUB_ITEM`
-- `HAS_ENTITY`
-- `HAS_SUBORDINATE`
 
 规则：
 
@@ -499,6 +507,8 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 
 ### 9.3 语义边
 
+- `HAS_ENTITY`
+- `HAS_SUBORDINATE`
 - `SECTION_RELATED`
 - `ENTITY_RELATED`
 - `CONDITION_OF`
@@ -592,9 +602,10 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 
 职责：
 
-- 为 `ProvisionNode` 和 `TocNode` 生成 `summary`
-- 对 `AppendixNode`、必要时 `AppendixItemNode` 生成摘要
+- 只为语义聚合节点生成 `summary`
+- 对 `TocNode`、有规范子节点的 `ProvisionNode`、有子项的 `AppendixNode` 生成聚合摘要
 - 采用自底向上聚合方式生成高层目录摘要
+- 叶子法条节点默认不做自由自然语言摘要
 
 输入：
 
@@ -610,21 +621,36 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 
 禁止项：
 
+- 不对叶子法条做原文改写式摘要
 - 不写 `description`
 - 不写 `embedding_ref`
 - 不新增实体和关系
+
+执行约束：
+
+- 允许阶段内批处理与并发，但必须保持 bottom-up 依赖顺序
+- `summarize` 只能采用分层批并发：层内并发、层间串行
+- 父节点不得与其依赖的子聚合节点混在同一执行批次
+- 若启用断点续跑，必须先回放已完成任务结果，再继续上层聚合
 
 ### 10.4 `extract`
 
 职责：
 
-- 从条文原文与摘要中抽取 `EntityNode`
+- 以语义叶子节点原文为主、以上层聚合摘要为辅抽取 `EntityNode`
 - 新增 `HAS_ENTITY`
 - 在文本证据充分时生成显式语义边
 
 输入：
 
 - `summarize` 产物
+
+输入规则：
+
+- 语义叶子节点优先使用 `text`
+- 父级 `summary` 与章节 `summary` 仅作为短文本上下文补充
+- 不将聚合 `summary` 当作与叶子原文等价的主抽取语料
+- `REFERENCE_TO` 优先通过规则解析当前原文中的显式引用来生成，不依赖模型自由生成目标节点
 
 输出：
 
@@ -642,6 +668,14 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 - 不给 `ProvisionNode` 增加 `description`
 - 不给 `EntityNode` 写 `text/address`
 - 不输出无证据强关系
+- 不允许使用截断原文或推测性文本伪造 `evidence`
+- `evidence` 必须是当前叶子节点原文中的精确子串；若不能精确定位，则不入图
+
+执行约束：
+
+- `extract` 可采用独立任务批并发，因为语义叶子节点之间默认相互独立
+- 阶段执行参数如 `batch_size`、`concurrency` 属于运行参数，只能由执行器消费，不得透传给模型 SDK
+- 若启用断点续跑，必须按任务粒度恢复，不得伪造半成品 `GraphBundle`
 
 ### 10.5 `aggr`
 
@@ -803,9 +837,16 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 ### 11.2 派生字段边界
 
 - `ProvisionNode.text` 是唯一规范依据
-- `summary` 只用于压缩、导航、抽取辅助和检索召回
+- `summary` 只用于聚合、导航、抽取辅助和检索召回，不替代叶子节点原文
 - `description` 只用于实体语义增强
 - `description` 不得替代法条解释
+
+### 11.4 统一语义输入规则
+
+- 语义叶子节点后续阶段优先使用 `text`
+- 语义聚合节点后续阶段优先使用 `summary`
+- 语义聚合节点可同时保留前导文本，但其主语义输入仍为 `summary`
+- 后续阶段不得假定所有节点都存在 `summary`
 
 ### 11.3 用户输出边界
 

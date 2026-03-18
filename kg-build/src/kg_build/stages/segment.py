@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import re
 
-from ..common import (
+from ..utils.ids import slugify
+from ..utils.numbers import (
     format_article_key,
     int_to_cn,
     parse_article_components,
-    slugify,
     to_fullwidth_digit_text,
     chinese_number_to_int,
 )

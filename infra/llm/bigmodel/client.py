@@ -32,7 +32,7 @@ class BigModelClient:
                 **self._merged_generation_params(params),
             )
             content = response.choices[0].message.content
-        except (AttributeError, IndexError, KeyError, TypeError) as exc:
+        except (AttributeError, IndexError, KeyError) as exc:
             raise ProviderResponseError("Invalid BigModel chat completion response shape.") from exc
         except Exception as exc:
             raise ProviderResponseError(f"Failed to call BigModel chat completion: {exc}") from exc
@@ -53,7 +53,7 @@ class BigModelClient:
                 **self._merged_embedding_params(params),
             )
             return [item.embedding for item in response.data]
-        except (AttributeError, KeyError, TypeError) as exc:
+        except (AttributeError, KeyError) as exc:
             raise ProviderResponseError("Invalid BigModel embedding response shape.") from exc
         except Exception as exc:
             raise ProviderResponseError(f"Failed to call BigModel embeddings: {exc}") from exc
@@ -63,6 +63,7 @@ class BigModelClient:
         merged.update(runtime_params)
         merged.pop("timeout_seconds", None)
         merged.pop("max_retries", None)
+        merged.setdefault("thinking", {"type": "disabled"})
         return merged
 
     def _merged_embedding_params(self, runtime_params: dict[str, Any]) -> dict[str, Any]:

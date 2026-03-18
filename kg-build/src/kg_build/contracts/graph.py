@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from ..common import project_root
+from ..utils.ids import project_root
 
 
 @lru_cache(maxsize=1)

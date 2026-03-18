@@ -16,6 +16,7 @@ Provider names should be explicit vendor or platform identifiers such as
 Current provider-specific requirements:
 
 - `bigmodel` uses the `zai-sdk` package
+- `deepseek` uses the `openai` package with DeepSeek's OpenAI-compatible API
 
 Core task semantics such as `summarize`, `extract`, and `pred` remain in
 the corresponding stage modules under `kg-build/src/kg_build/stages/`.

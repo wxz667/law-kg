@@ -17,8 +17,10 @@ def build_parser() -> argparse.ArgumentParser:
     build_parser.add_argument(
         "--start-stage",
         choices=STAGE_SEQUENCE,
-        default="ingest",
-        help="Stage to start from. Earlier stages will be reused from existing artifacts.",
+        help=(
+            "Optional explicit stage to start from. "
+            "If omitted, the pipeline resumes from the latest available implemented artifact."
+        ),
     )
     build_parser.add_argument(
         "--end-stage",
@@ -39,6 +41,7 @@ def main() -> int:
             data_root=Path(args.data_root),
             start_stage=args.start_stage,
             end_stage=args.end_stage,
+            report_progress=True,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0

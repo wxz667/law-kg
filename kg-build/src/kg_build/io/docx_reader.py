@@ -5,7 +5,7 @@ from pathlib import Path
 
 from docx import Document
 
-from ..common import checksum_text, slugify
+from ..utils.ids import checksum_text, slugify
 from ..contracts import SourceDocumentRecord
 
 PART_RE = re.compile(r"^第[一二三四五六七八九十百零]+编\s+.+$")
