@@ -48,5 +48,5 @@ Intermediate stage artifacts are written under `data/intermediate/`.
 ## Notes
 
 - `ingest`, `segment`, and `serialize` are implemented as production framework stages.
-- `summarize`, `extract`, `aggr`, `conv`, `embed`, `dedup`, and `pred` are preserved as stable TODO interfaces.
+- `summarize`, `extract`, `conv`, `aggr`, `embed`, `dedup`, and `pred` are preserved as stable TODO interfaces.
 - Neo4j is an optional downstream target and is not part of the core build pipeline.

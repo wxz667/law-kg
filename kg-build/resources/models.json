@@ -1,9 +1,9 @@
 {
   "stages": {
     "summarize": {
-      "provider": "bigmodel",
+      "provider": "deepseek",
       "purpose": "summarize",
-      "model": "glm-4.5",
+      "model": "deepseek-chat",
       "params": {
         "temperature": 0.2,
         "max_tokens": 256,

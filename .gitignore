@@ -3,11 +3,13 @@
 .pytest_cache/
 __pycache__/
 *.pyc
+*.egg-info/
 data/intermediate/**/*.json
 data/intermediate/**/*.jsonl
 data/manifest/**/*.json
 data/graph/*.json
 data/graph/*.jsonl
+data/graph/neo4j/
 infra/neo4j/data/
 infra/neo4j/logs/
 infra/neo4j/plugins/

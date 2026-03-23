@@ -97,8 +97,8 @@ Tree-KG 的核心方法分为两个阶段：
 - `data/intermediate/02_segment/`
 - `data/intermediate/03_summarize/`
 - `data/intermediate/04_extract/`
-- `data/intermediate/05_aggr/`
-- `data/intermediate/06_conv/`
+- `data/intermediate/05_conv/`
+- `data/intermediate/06_aggr/`
 - `data/intermediate/07_embed/`
 - `data/intermediate/08_dedup/`
 - `data/intermediate/09_pred/`
@@ -544,7 +544,7 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 
 核心 pipeline：
 
-`ingest -> segment -> summarize -> extract -> aggr -> conv -> embed -> dedup -> pred -> serialize`
+`ingest -> segment -> summarize -> extract -> conv -> aggr -> embed -> dedup -> pred -> serialize`
 
 ### 10.1 `ingest`
 
@@ -677,32 +677,7 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 - 阶段执行参数如 `batch_size`、`concurrency` 属于运行参数，只能由执行器消费，不得透传给模型 SDK
 - 若启用断点续跑，必须按任务粒度恢复，不得伪造半成品 `GraphBundle`
 
-### 10.5 `aggr`
-
-职责：
-
-- 在实体层区分核心实体与非核心实体
-- 将可聚合的实体关系转成 `HAS_SUBORDINATE`
-
-输入：
-
-- `extract` 产物
-
-输出：
-
-- 带实体层聚合结构的 `GraphBundle`
-
-允许写入：
-
-- `HAS_SUBORDINATE`
-- 与实体角色相关的 `metadata`
-
-禁止项：
-
-- 不修改条文结构
-- 不新增法条级语义描述字段
-
-### 10.6 `conv`
+### 10.5 `conv`
 
 职责：
 
@@ -710,7 +685,7 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 
 输入：
 
-- `aggr` 产物
+- `extract` 产物
 
 输出：
 
@@ -726,6 +701,31 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 - 不向 `TocNode` 写 `description`
 - 不向 `AppendixNode` 或 `AppendixItemNode` 写 `description`
 - 不把卷积结果视为法条解释或规范依据
+
+### 10.6 `aggr`
+
+职责：
+
+- 在实体层区分核心实体与非核心实体
+- 将可聚合的实体关系转成 `HAS_SUBORDINATE`
+
+输入：
+
+- `conv` 产物
+
+输出：
+
+- 带实体层聚合结构的 `GraphBundle`
+
+允许写入：
+
+- `HAS_SUBORDINATE`
+- 与实体角色相关的 `metadata`
+
+禁止项：
+
+- 不修改条文结构
+- 不新增法条级语义描述字段
 
 ### 10.7 `embed`
 
