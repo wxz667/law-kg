@@ -33,6 +33,15 @@
     "appendix_item": "AppendixItemNode",
     "entity": "EntityNode"
   },
+  "entity_types": [
+    "subject",
+    "action",
+    "object",
+    "condition",
+    "penalty",
+    "exception",
+    "concept"
+  ],
   "node_type_fields": {
     "DocumentNode": [
       "id",
@@ -49,7 +58,6 @@
       "level",
       "source_id",
       "summary",
-      "address",
       "metadata"
     ],
     "ProvisionNode": [
@@ -60,7 +68,6 @@
       "source_id",
       "text",
       "summary",
-      "address",
       "metadata"
     ],
     "EntityNode": [
@@ -82,7 +89,6 @@
       "source_id",
       "text",
       "summary",
-      "address",
       "metadata"
     ],
     "AppendixItemNode": [
@@ -93,7 +99,6 @@
       "source_id",
       "text",
       "summary",
-      "address",
       "metadata"
     ]
   },
@@ -235,6 +240,7 @@
       "CONDITION_OF",
       "PENALTY_OF",
       "EXCEPTION_TO",
+      "REFERENCE_TO",
       "SAME_AS"
     ],
     "AppendixNode": [

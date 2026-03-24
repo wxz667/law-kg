@@ -660,6 +660,7 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 
 - `EntityNode.description`
 - 可选 `EntityNode.summary`
+- `EntityNode.metadata.entity_type / owner_node_id / owner_level`
 - `HAS_ENTITY`
 - 明确证据支持的 `REFERENCE_TO`、`CONDITION_OF`、`PENALTY_OF`、`EXCEPTION_TO`、`ENTITY_RELATED`
 
@@ -670,12 +671,16 @@ Neo4j 属于后续可选下游，不属于当前核心构建流程主存储。
 - 不输出无证据强关系
 - 不允许使用截断原文或推测性文本伪造 `evidence`
 - `evidence` 必须是当前叶子节点原文中的精确子串；若不能精确定位，则不入图
+- 不得把 `本法`、`前款的规定`、`依照前款的规定处罚` 这类纯引用或规则套话直接作为普通概念实体入图
+- `REFERENCE_TO` 的 `metadata.reference_kind` 必须限定在 `document / appendix / provision`
+- 不得在主图中保留“以后再处理”的处罚中间层；对刑法条文中的法定后果，应优先保留完整法定后果表达
 
 执行约束：
 
 - `extract` 可采用独立任务批并发，因为语义叶子节点之间默认相互独立
 - 阶段执行参数如 `batch_size`、`concurrency` 属于运行参数，只能由执行器消费，不得透传给模型 SDK
 - 若启用断点续跑，必须按任务粒度恢复，不得伪造半成品 `GraphBundle`
+- `EntityNode.description` 在本阶段应作为稳定语义种子，采用法律化短定义，为 `conv` 提供可消费输入
 
 ### 10.5 `conv`
 

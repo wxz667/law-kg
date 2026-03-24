@@ -43,6 +43,10 @@ def _allowed_outgoing_edges() -> dict[str, set[str]]:
     }
 
 
+def _schema_enum(name: str) -> set[str]:
+    return set(load_graph_schema().get(name, []))
+
+
 def _structural_edge_rules() -> set[tuple[str, str, str]]:
     rules = load_graph_schema().get("structural_edges", [])
     return {
@@ -85,7 +89,6 @@ class NodeRecord:
     summary: str = ""
     description: str = ""
     embedding_ref: str = ""
-    address: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -106,8 +109,6 @@ class NodeRecord:
             payload["description"] = self.description
         if self.embedding_ref:
             payload["embedding_ref"] = self.embedding_ref
-        if self.address:
-            payload["address"] = self.address
         allowed_fields = set(_allowed_fields_for_type(self.type))
         return {key: value for key, value in payload.items() if key in allowed_fields}
 
@@ -140,13 +141,21 @@ class NodeRecord:
             illegal_populated_fields.append("description")
         if self.embedding_ref and "embedding_ref" not in allowed_fields:
             illegal_populated_fields.append("embedding_ref")
-        if self.address and "address" not in allowed_fields:
-            illegal_populated_fields.append("address")
         if illegal_populated_fields:
             field_list = ", ".join(illegal_populated_fields)
             raise ValueError(
                 f"Node {self.id} of type {self.type} contains illegal populated fields: {field_list}"
             )
+        if self.type == "EntityNode":
+            entity_type = self.metadata.get("entity_type")
+            if entity_type is not None and entity_type not in _schema_enum("entity_types"):
+                raise ValueError(f"Node {self.id} has invalid entity_type metadata: {entity_type}")
+            owner_level = self.metadata.get("owner_level")
+            if owner_level is not None and owner_level not in _levels():
+                raise ValueError(f"Node {self.id} has invalid owner_level metadata: {owner_level}")
+            is_ref = self.metadata.get("is_ref")
+            if is_ref is not None and not isinstance(is_ref, bool):
+                raise ValueError(f"Node {self.id} has invalid is_ref metadata: {is_ref}")
 
 
 @dataclass

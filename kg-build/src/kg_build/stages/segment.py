@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from ..utils.ids import slugify
+from ..utils.locator import NodeLocator, node_id_from_locator, node_locator_from_node_id
 from ..utils.numbers import (
     format_article_key,
     int_to_cn,
@@ -89,7 +90,6 @@ def run(source_document: SourceDocumentRecord) -> GraphBundle:
                 name=line,
                 level=level,
                 source_id=source_document.source_id,
-                address=build_catalog_address(level, counters),
                 metadata={
                     "ordinal": counters[level],
                     "heading_line": line,
@@ -147,13 +147,13 @@ def build_article_node(source_id: str, line: str) -> tuple[NodeRecord, str]:
     inline_text = match.group(2).strip()
     article_no, article_suffix = parse_article_components(article_label)
     article_key = format_article_key(article_no, article_suffix)
+    locator = NodeLocator(kind="provision", article_no=article_no, article_suffix=article_suffix)
     node = NodeRecord(
-        id=f"article:{slugify(source_id)}:{article_key}",
+        id=node_id_from_locator(locator, source_id),
         type=LEVEL_TO_NODE_TYPE["article"],
         name=article_label,
         level="article",
         source_id=source_id,
-        address=build_address(article_no, article_suffix, None, None, None),
         metadata={
             "article_label": article_label,
             "article_no": article_no,
@@ -175,8 +175,11 @@ def finalize_article(
     if not paragraph_texts:
         return
 
-    article_no = int(article_node.address["article_no"])
-    article_suffix = article_node.address.get("article_suffix")
+    locator = node_locator_from_node_id(article_node.id)
+    if locator is None or locator.kind != "provision" or locator.article_no is None:
+        raise ValueError(f"Unable to resolve article locator from node id: {article_node.id}")
+    article_no = locator.article_no
+    article_suffix = locator.article_suffix
     article_key = format_article_key(article_no, article_suffix)
 
     if len(paragraph_texts) == 1:
@@ -189,7 +192,6 @@ def finalize_article(
                 name=build_paragraph_name(article_node.name, 1),
                 level="paragraph",
                 source_id=article_node.source_id,
-                address=build_address(article_no, article_suffix, 1, None, None),
                 metadata={"parent_article_id": article_node.id},
             )
             nodes.append(paragraph_node)
@@ -231,12 +233,19 @@ def finalize_article(
 
     for paragraph_index, paragraph_source_text in enumerate(paragraph_texts, start=1):
         paragraph_node = NodeRecord(
-            id=f"paragraph:{slugify(article_node.source_id)}:{article_key}:{paragraph_index:02d}",
+            id=node_id_from_locator(
+                NodeLocator(
+                    kind="provision",
+                    article_no=article_no,
+                    article_suffix=article_suffix,
+                    paragraph_no=paragraph_index,
+                ),
+                article_node.source_id,
+            ),
             type=LEVEL_TO_NODE_TYPE["paragraph"],
             name=build_paragraph_name(article_node.name, paragraph_index),
             level="paragraph",
             source_id=article_node.source_id,
-            address=build_address(article_no, article_suffix, paragraph_index, None, None),
             metadata={"parent_article_id": article_node.id},
         )
         nodes.append(paragraph_node)
@@ -310,7 +319,6 @@ def attach_text_hierarchy(
             level="item",
             source_id=article_node.source_id,
             text=item_lead if sub_item_segments else item_body_text.strip(),
-            address=build_address(article_no, article_suffix, paragraph_no, item_index, None),
             metadata={
                 f"parent_{parent_level}_id": parent_node.id,
                 "item_marker": item_marker_text,
@@ -341,7 +349,6 @@ def attach_text_hierarchy(
                 level="sub_item",
                 source_id=article_node.source_id,
                 text=sub_item_body_text.strip(),
-                address=build_address(article_no, article_suffix, paragraph_no, item_index, sub_item_index),
                 metadata={
                     "parent_item_id": item_node.id,
                     "sub_item_marker": sub_item_marker_text,
@@ -367,14 +374,12 @@ def finalize_appendix(
     raw_lines: list[str],
     appendix_item_pattern: re.Pattern[str],
 ) -> None:
-    appendix_key = f"{appendix_no:02d}"
     appendix_node = NodeRecord(
-        id=f"appendix:{slugify(source_id)}:{appendix_key}",
+        id=node_id_from_locator(NodeLocator(kind="appendix", appendix_no=appendix_no), source_id),
         type=LEVEL_TO_NODE_TYPE["appendix"],
         name=appendix_label,
         level="appendix",
         source_id=source_id,
-        address=build_appendix_address(appendix_no, None),
         metadata={"appendix_label": appendix_label},
     )
     nodes.append(appendix_node)
@@ -414,13 +419,15 @@ def finalize_appendix(
 
     for item_no, item_text in appendix_items:
         appendix_item_node = NodeRecord(
-            id=f"appendix_item:{slugify(source_id)}:{appendix_key}:{item_no:02d}",
+            id=node_id_from_locator(
+                NodeLocator(kind="appendix", appendix_no=appendix_no, appendix_item_no=item_no),
+                source_id,
+            ),
             type=LEVEL_TO_NODE_TYPE["appendix_item"],
             name=f"{appendix_label}第{item_no}项",
             level="appendix_item",
             source_id=source_id,
             text=item_text,
-            address=build_appendix_address(appendix_no, item_no),
             metadata={
                 "appendix_label": appendix_label,
                 "parent_appendix_id": appendix_node.id,
@@ -504,10 +511,17 @@ def split_appendix_blocks(
 
 
 def build_item_id(source_id: str, article_key: str, paragraph_no: int | None, item_no: int) -> str:
-    base = f"item:{slugify(source_id)}:{article_key}"
-    if paragraph_no is not None:
-        base = f"{base}:{paragraph_no:02d}"
-    return f"{base}:{item_no:02d}"
+    article_no, article_suffix = parse_article_key_components(article_key)
+    return node_id_from_locator(
+        NodeLocator(
+            kind="provision",
+            article_no=article_no,
+            article_suffix=article_suffix,
+            paragraph_no=paragraph_no,
+            item_no=item_no,
+        ),
+        source_id,
+    )
 
 
 def build_sub_item_id(
@@ -517,8 +531,25 @@ def build_sub_item_id(
     item_no: int,
     sub_item_no: int,
 ) -> str:
-    item_id = build_item_id(source_id, article_key, paragraph_no, item_no)
-    return f"{item_id}:{sub_item_no:02d}".replace("item:", "sub_item:", 1)
+    article_no, article_suffix = parse_article_key_components(article_key)
+    return node_id_from_locator(
+        NodeLocator(
+            kind="provision",
+            article_no=article_no,
+            article_suffix=article_suffix,
+            paragraph_no=paragraph_no,
+            item_no=item_no,
+            sub_item_no=sub_item_no,
+        ),
+        source_id,
+    )
+
+
+def parse_article_key_components(article_key: str) -> tuple[int, int | None]:
+    if "-" not in article_key:
+        return int(article_key), None
+    article_no, suffix = article_key.split("-", 1)
+    return int(article_no), int(suffix)
 
 
 def find_parent(level_stack: dict[str, NodeRecord], level: str) -> NodeRecord:
@@ -573,49 +604,6 @@ def extract_sub_item_marker(text: str) -> tuple[str, str]:
     if not match:
         raise ValueError(f"Invalid sub-item text: {text}")
     return match.group(1), match.group(2).strip()
-
-
-def build_catalog_address(level: str, counters: dict[str, int]) -> dict[str, int | None]:
-    return {
-        "part_no": counters["part"] or None,
-        "chapter_no": counters["chapter"] or None,
-        "section_no": counters["section"] or None,
-        "level_marker": level,
-    }
-
-
-def build_address(
-    article_no: int,
-    article_suffix: int | None,
-    paragraph_no: int | None,
-    item_no: int | None,
-    sub_item_no: int | None,
-) -> dict[str, int | None]:
-    return {
-        "article_no": article_no,
-        "article_suffix": article_suffix,
-        "paragraph_no": paragraph_no,
-        "item_no": item_no,
-        "sub_item_no": sub_item_no,
-        "appendix_no": None,
-        "appendix_item_no": None,
-    }
-
-
-def build_appendix_address(
-    appendix_no: int,
-    appendix_item_no: int | None,
-) -> dict[str, int | None]:
-    return {
-        "article_no": None,
-        "article_suffix": None,
-        "paragraph_no": None,
-        "item_no": None,
-        "sub_item_no": None,
-        "appendix_no": appendix_no,
-        "appendix_item_no": appendix_item_no,
-    }
-
 
 def build_paragraph_name(article_name: str, paragraph_no: int) -> str:
     return f"{article_name}第{int_to_cn(paragraph_no)}款"

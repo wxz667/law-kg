@@ -14,6 +14,13 @@ from .numbers import (
     parse_article_components,
     to_fullwidth_digit_text,
 )
+from .locator import (
+    NodeLocator,
+    build_reference_lookup,
+    node_locator_from_node_id,
+    node_id_from_locator,
+    resolve_reference_targets,
+)
 from .progress import ConsoleStageProgressReporter, StageProgressReporter, emit_status
 
 __all__ = [
@@ -29,6 +36,11 @@ __all__ = [
     "int_to_cn",
     "parse_article_components",
     "to_fullwidth_digit_text",
+    "NodeLocator",
+    "build_reference_lookup",
+    "node_locator_from_node_id",
+    "node_id_from_locator",
+    "resolve_reference_targets",
     "ConsoleStageProgressReporter",
     "StageProgressReporter",
     "emit_status",

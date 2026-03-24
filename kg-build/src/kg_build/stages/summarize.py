@@ -22,6 +22,7 @@ PARENT_SUMMARY_SYSTEM_PROMPT = """
 你的任务是基于当前节点的引导性正文与下级规范文本，自底向上生成父级聚合摘要。
 只概括共同主题、规制对象和适用范围，不做解释，不做推理，不引入条外事实。
 不要逐条复述输入内容，不要使用“本条规定”“本款明确”这类近原文改写句式。
+不超过100字，保持精炼，突出核心要义。
 """.strip()
 
 
@@ -105,8 +106,6 @@ def build_parent_summary_prompt(
         f"上级路径: {parent_context.get('path', '')}\n"
         "聚合输入如下:\n"
         f"{child_lines}\n\n"
-        "请基于这些输入生成一段40到80字的中文聚合摘要。"
-        "摘要应压缩共同主题、规制对象和适用范围，不要逐条复述，不要写成法条释义。"
     )
     return PARENT_SUMMARY_SYSTEM_PROMPT, prompt
 
