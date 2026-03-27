@@ -36,10 +36,8 @@
   "entity_types": [
     "subject",
     "action",
-    "object",
     "condition",
     "penalty",
-    "exception",
     "concept"
   ],
   "node_type_fields": {
@@ -113,12 +111,9 @@
     "HAS_APPENDIX_ITEM",
     "HAS_SUB_ITEM",
     "HAS_ENTITY",
-    "HAS_SUBORDINATE",
-    "SECTION_RELATED",
-    "ENTITY_RELATED",
-    "CONDITION_OF",
-    "PENALTY_OF",
-    "EXCEPTION_TO",
+    "HAS_ACTION",
+    "WITH_CONDITION",
+    "HAS_PENALTY",
     "REFERENCE_TO",
     "SAME_AS"
   ],
@@ -133,12 +128,9 @@
     "HAS_APPENDIX_ITEM": "structural",
     "HAS_SUB_ITEM": "structural",
     "HAS_ENTITY": "explicit_semantic",
-    "HAS_SUBORDINATE": "explicit_semantic",
-    "SECTION_RELATED": "weak_semantic",
-    "ENTITY_RELATED": "weak_semantic",
-    "CONDITION_OF": "explicit_semantic",
-    "PENALTY_OF": "explicit_semantic",
-    "EXCEPTION_TO": "explicit_semantic",
+    "HAS_ACTION": "explicit_semantic",
+    "WITH_CONDITION": "explicit_semantic",
+    "HAS_PENALTY": "explicit_semantic",
     "REFERENCE_TO": "explicit_semantic",
     "SAME_AS": "explicit_semantic"
   },
@@ -225,40 +217,24 @@
       "HAS_ITEM",
       "HAS_SUB_ITEM",
       "HAS_ENTITY",
-      "HAS_SUBORDINATE",
-      "SECTION_RELATED",
-      "ENTITY_RELATED",
-      "CONDITION_OF",
-      "PENALTY_OF",
-      "EXCEPTION_TO",
       "REFERENCE_TO",
       "SAME_AS"
     ],
     "EntityNode": [
-      "HAS_SUBORDINATE",
-      "ENTITY_RELATED",
-      "CONDITION_OF",
-      "PENALTY_OF",
-      "EXCEPTION_TO",
+      "HAS_ACTION",
+      "WITH_CONDITION",
+      "HAS_PENALTY",
       "REFERENCE_TO",
       "SAME_AS"
     ],
     "AppendixNode": [
       "HAS_APPENDIX_ITEM",
       "HAS_ENTITY",
-      "ENTITY_RELATED",
-      "CONDITION_OF",
-      "PENALTY_OF",
-      "EXCEPTION_TO",
       "REFERENCE_TO",
       "SAME_AS"
     ],
     "AppendixItemNode": [
       "HAS_ENTITY",
-      "ENTITY_RELATED",
-      "CONDITION_OF",
-      "PENALTY_OF",
-      "EXCEPTION_TO",
       "REFERENCE_TO",
       "SAME_AS"
     ]

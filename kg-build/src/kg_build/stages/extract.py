@@ -28,30 +28,62 @@ EXTRACT_SYSTEM_PROMPT = """
 
 要求：
 1. 实体必须是当前条文中可成立的法律语义单元，类型只能是：
-subject|action|object|condition|penalty|exception|concept
+subject|action|condition|penalty|concept
 2. 处罚实体优先保留完整法定后果表达，例如“三年以上十年以下有期徒刑”“五年以下有期徒刑或者拘役，并处罚金”。
 3. description 必须是简短法律化定义，不能写“法律概念/法律行为/处罚概念”等空标签，也不要加入“本法”“本条规定”“这是”“主要指”等冗语。
-4. 若某实体的语义成立依赖其他条款内容，例如“依照前款的规定处罚”“本法第七十九条规定的程序”“前款所犯罪行”，则该实体必须标记 is_ref=true。
-5. 不要把裸引用锚点直接当实体输出，例如“前款”“第一款”“本法”；只有当引用内容在当前条文中承担明确规范角色时，才输出该实体。
-6. 关系类型只能是：
-ENTITY_RELATED|CONDITION_OF|PENALTY_OF|EXCEPTION_TO
+4. concept 只用于明确定义的法律术语或罪名；如果某短语能直接作为主体、行为、条件或后果成分，则不要输出为 concept。
+5. 若某实体的语义成立依赖其他条款内容，例如“依照前款的规定处罚”“本法第七十九条规定的程序”“前款所犯罪行”，则该实体必须标记 is_ref=true。
+6. 不要把裸引用锚点直接当实体输出，例如“前款”“第一款”“本法”；只有当引用内容在当前条文中承担明确规范角色时，才输出该实体。
+7. 关系类型只能是：
+HAS_ACTION|WITH_CONDITION|HAS_PENALTY
+8. 关系骨架遵循以下约束：
+   - HAS_ACTION: 主体 -> 行为
+   - WITH_CONDITION: 行为 -> 条件
+   - HAS_PENALTY: 条件 -> 后果；若原文未显式给出条件分支，也可用 行为 -> 后果
+9. 若同一行为在不同条件下对应不同后果，必须把每一组“条件 -> 后果”分别显式输出，不能把多个条件和多个后果混成一团。
+10. 若一个行为有多个并列条件分支，且每个条件分支对应专门的处罚，则每个条件分支都必须由该行为显式连出：
+   - action -WITH_CONDITION-> condition_1
+   - condition_1 -HAS_PENALTY-> penalty_1
+   - action -WITH_CONDITION-> condition_2
+   - condition_2 -HAS_PENALTY-> penalty_2
+   不能只输出部分条件分支，也不能只输出 condition -> penalty 而漏掉 action -> condition。
+11. 若一个条件短语本身包含多个并列限制，例如“数额较大，拒不退还”“数额巨大或者有其他严重情节”，可作为一个整体 condition 输出；不要为了拆分而拆分。
+12. 不要输出与上述骨架无关的弱关系；concept 默认不参与本地骨架关系，除非它在原文中被明确定义并承担必要语义角色。
+
+示例：
+- “将代为保管的他人财物非法占为己有，数额较大，拒不退还的，处二年以下有期徒刑、拘役或者罚金；数额巨大或者有其他严重情节的，处二年以上五年以下有期徒刑，并处罚金”
+  应输出：
+  - action: 将代为保管的他人财物非法占为己有
+  - condition: 数额较大，拒不退还
+  - penalty: 二年以下有期徒刑、拘役或者罚金
+  - condition: 数额巨大或者有其他严重情节
+  - penalty: 二年以上五年以下有期徒刑，并处罚金
+  - relation: action -WITH_CONDITION-> condition(数额较大，拒不退还)
+  - relation: condition(数额较大，拒不退还) -HAS_PENALTY-> penalty(二年以下...)
+  - relation: action -WITH_CONDITION-> condition(数额巨大或者有其他严重情节)
+  - relation: condition(数额巨大或者有其他严重情节) -HAS_PENALTY-> penalty(二年以上五年以下...)
 
 输出必须是 JSON 对象，且只包含 entities 和 relations 两个字段。
 
 entities 中每个对象格式：
-{"name":"...","entity_type":"subject|action|object|condition|penalty|exception|concept","description":"...","evidence":"...","is_ref":true|false}
+{"name":"...","entity_type":"subject|action|condition|penalty|concept","description":"...","evidence":"...","is_ref":true|false}
 
 relations 中每个对象格式：
-{"type":"ENTITY_RELATED|CONDITION_OF|PENALTY_OF|EXCEPTION_TO","source":"...","target":"...","evidence":"..."}
+{"type":"HAS_ACTION|WITH_CONDITION|HAS_PENALTY","source":"...","target":"...","evidence":"..."}
 
 除 JSON 外不要输出任何文字。
 """.strip()
 
 ALLOWED_RELATION_TYPES = {
-    "ENTITY_RELATED",
-    "CONDITION_OF",
-    "PENALTY_OF",
-    "EXCEPTION_TO",
+    "HAS_ACTION",
+    "WITH_CONDITION",
+    "HAS_PENALTY",
+}
+
+ALLOWED_RELATION_SHAPES = {
+    "HAS_ACTION": {("subject", "action")},
+    "WITH_CONDITION": {("action", "condition")},
+    "HAS_PENALTY": {("condition", "penalty"), ("action", "penalty")},
 }
 
 @dataclass(frozen=True)
@@ -426,15 +458,26 @@ def normalize_relations(
         relation = normalize_relation_row(row, context)
         if relation is None:
             continue
-        if relation.source not in local_entities:
+        source_entity = local_entities.get(relation.source)
+        target_entity = local_entities.get(relation.target)
+        if source_entity is None or target_entity is None:
             continue
-        if relation.target not in local_entities:
+        if not is_allowed_relation_shape(
+            relation.type,
+            source_entity.entity_type,
+            target_entity.entity_type,
+        ):
             continue
         key = (relation.type, relation.source, relation.target, relation.evidence_text)
         if key in seen:
             continue
         seen.add(key)
         normalized.append(relation)
+    normalized = complete_relation_branches(
+        relations=normalized,
+        context=context,
+        local_entities=local_entities,
+    )
     return normalized
 
 
@@ -468,6 +511,95 @@ def normalize_relation_type(raw_type: str) -> str:
     normalized = re.sub(r"[^A-Z_]+", "_", normalized)
     normalized = re.sub(r"_+", "_", normalized).strip("_")
     return normalized
+
+
+def is_allowed_relation_shape(
+    relation_type: str,
+    source_entity_type: str,
+    target_entity_type: str,
+) -> bool:
+    allowed_shapes = ALLOWED_RELATION_SHAPES.get(relation_type)
+    if allowed_shapes is None:
+        return False
+    return (source_entity_type, target_entity_type) in allowed_shapes
+
+
+def complete_relation_branches(
+    *,
+    relations: list[ExtractedRelation],
+    context: ExtractContext,
+    local_entities: dict[str, ExtractedEntity],
+) -> list[ExtractedRelation]:
+    completed = list(relations)
+    seen = {
+        (relation.type, relation.source, relation.target, relation.evidence_text)
+        for relation in completed
+    }
+    actions = [entity for entity in local_entities.values() if entity.entity_type == "action"]
+    if len(actions) != 1:
+        return completed
+    sole_action = actions[0]
+    condition_targets = {
+        relation.target
+        for relation in completed
+        if relation.type == "WITH_CONDITION" and relation.source == sole_action.canonical_name
+    }
+    penalty_targets = {
+        relation.target
+        for relation in completed
+        if relation.type == "HAS_PENALTY" and relation.source == sole_action.canonical_name
+    }
+    condition_penalty_sources = {
+        relation.source
+        for relation in completed
+        if relation.type == "HAS_PENALTY"
+        and local_entities.get(relation.source, sole_action).entity_type == "condition"
+    }
+    for condition_name in sorted(condition_penalty_sources):
+        if condition_name in condition_targets:
+            continue
+        condition_entity = local_entities.get(condition_name)
+        if condition_entity is None:
+            continue
+        key = ("WITH_CONDITION", sole_action.canonical_name, condition_name, condition_entity.evidence_text)
+        if key in seen or condition_entity.evidence_text not in context.node_text:
+            continue
+        completed.append(
+            ExtractedRelation(
+                type="WITH_CONDITION",
+                source=sole_action.canonical_name,
+                target=condition_name,
+                evidence_text=condition_entity.evidence_text,
+                owner_node_id=context.node_id,
+            )
+        )
+        seen.add(key)
+        condition_targets.add(condition_name)
+    referenced_penalties = {
+        relation.target
+        for relation in completed
+        if relation.type == "HAS_PENALTY"
+    }
+    for entity in local_entities.values():
+        if entity.entity_type != "penalty":
+            continue
+        if entity.canonical_name in referenced_penalties or entity.canonical_name in penalty_targets:
+            continue
+        key = ("HAS_PENALTY", sole_action.canonical_name, entity.canonical_name, entity.evidence_text)
+        if key in seen or entity.evidence_text not in context.node_text:
+            continue
+        completed.append(
+            ExtractedRelation(
+                type="HAS_PENALTY",
+                source=sole_action.canonical_name,
+                target=entity.canonical_name,
+                evidence_text=entity.evidence_text,
+                owner_node_id=context.node_id,
+            )
+        )
+        seen.add(key)
+        penalty_targets.add(entity.canonical_name)
+    return completed
 
 
 def materialize_entities(
