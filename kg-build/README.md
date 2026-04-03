@@ -1,52 +1,84 @@
 # kg-build
 
-`kg-build` is the delivery-grade build framework for constructing a knowledge
-graph from the `docx` text of the Criminal Law of the People's Republic of
-China.
+`kg-build` 是统一主流水线项目，负责：
 
-The structural hierarchy is:
+1. 文档导入 `ingest`
+2. 结构切分 `segment`
+3. 关系链接阶段 `link`
 
-- `article`
-- `paragraph`
-- `item`
-- `sub_item`
+当前阶段不再承担 TreeKG/LLM 语义抽取逻辑，只保留法律文本结构化底座，并在 `link` 阶段调用外部 `kg-link` 子项目进行关系检测。最终产物导出由 pipeline 内部统一完成，不再作为独立阶段暴露。
 
-## Public entrypoint
+## 当前流水线
 
-The only public build command is:
-
-```bash
-cd /home/zephyr/law-kg/kg-build
-PYTHONPATH=src /home/zephyr/law-kg/.venv/bin/python -m kg_build.cli build \
-  --source /home/zephyr/law-kg/data/raw/statutes/中华人民共和国刑法.docx \
-  --data-root /home/zephyr/law-kg/data
+```text
+ingest -> segment -> link
 ```
 
-You can also run a partial range:
+## 运行方式
 
 ```bash
-cd /home/zephyr/law-kg/kg-build
-PYTHONPATH=src /home/zephyr/law-kg/.venv/bin/python -m kg_build.cli build \
-  --source /home/zephyr/law-kg/data/raw/statutes/中华人民共和国刑法.docx \
-  --data-root /home/zephyr/law-kg/data \
-  --start-stage extract \
-  --end-stage pred
+cd /home/zephyr/law-kg
+PYTHONPATH=kg-build/src .venv/bin/python -m kg_build.cli build \
+  --data-root data \
+  --source law/中华人民共和国刑法.docx
 ```
 
-## Output model
+也可以只跑到某一阶段：
 
-The canonical graph artifact is:
+```bash
+PYTHONPATH=kg-build/src .venv/bin/python -m kg_build.cli build \
+  --data-root data \
+  --source law/中华人民共和国刑法.docx \
+  --start segment \
+  --end link
+```
 
-- `data/graph/graph.bundle.json`
+批量构建：
 
-Embedding outputs are reserved under:
+```bash
+PYTHONPATH=kg-build/src .venv/bin/python -m kg_build.cli build-batch \
+  --data-root data \
+  --category law \
+  --end segment
+```
 
-- `data/intermediate/07_embed/embeddings.jsonl`
+全量重跑且不复用缓存：
 
-Intermediate stage artifacts are written under `data/intermediate/`.
+```bash
+PYTHONPATH=kg-build/src .venv/bin/python -m kg_build.cli build-batch \
+  --data-root data \
+  --end segment \
+  --rebuild
+```
 
-## Notes
+## 产物
 
-- `ingest`, `segment`, and `serialize` are implemented as production framework stages.
-- `summarize`, `extract`, `conv`, `aggr`, `embed`, `dedup`, and `pred` are preserved as stable TODO interfaces.
-- Neo4j is an optional downstream target and is not part of the core build pipeline.
+- `data/intermediate/01_ingest/<scope>.source_document.json`
+- `data/intermediate/02_segment/graph.bundle-0001.json`
+- `data/intermediate/02_segment/graph.index.json`
+- `data/intermediate/03_link/graph.bundle-0001.json`
+- `data/intermediate/03_link/graph.index.json`
+- `data/exports/json/graph.bundle-0001.json`
+- `data/exports/json/graph.index.json`
+
+## 说明
+
+- `segment` 只负责结构节点和 `HAS_CHILD` 结构边。
+- `DocumentNode` 顶层保留 `document_type / document_subtype / status`，其余文档说明字段放在 `metadata`。
+- `document_subtype` 只在能明确判定细分类时填写；无法可靠判定时留空，不使用 `general` 之类的兜底值。
+- `link` 当前已接入 `kg-link` 的占位预测接口，后续可替换为 DeepKE 推理。
+- CLI 运行时只显示进度条和错误摘要，不再打印详细阶段日志。
+- 单文档构建会显示当前阶段名；批处理按阶段推进，每个阶段只显示一条纯进度条。
+- 导出不再作为独立阶段暴露，而是在 pipeline 收尾时统一完成。
+- `build-batch` 默认从 `data/raw` 递归发现文档，也可以通过 `--category` 限定子目录。
+- `build-batch` 按阶段批量执行：先全量跑完当前阶段，再进入下一阶段。
+- 批处理结束时终端只输出总览统计；具体失败条目写入 `data/logs/kg-build/`。
+- `segment` 与 `link` 的公开阶段产物会聚合为分片 bundle；单文档缓存与 manifests 迁入 `data/.cache/kg-build/`。
+- 单文档从 `link` 起跑时，会优先从 `02_segment` 的聚合图索引中回查对应文档子图。
+- `--start` / `--end` 是对外的阶段参数名称。
+- `--rebuild` 会强制从 `ingest` 重跑，不复用旧缓存。
+- 规范关系类型预留为：
+  - `REFERS_TO`
+  - `INTERPRETS`
+  - `AMENDS`
+  - `REPEALS`

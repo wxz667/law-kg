@@ -3,9 +3,7 @@
     "DocumentNode",
     "TocNode",
     "ProvisionNode",
-    "EntityNode",
-    "AppendixNode",
-    "AppendixItemNode"
+    "AppendixNode"
   ],
   "levels": [
     "document",
@@ -13,12 +11,11 @@
     "chapter",
     "section",
     "article",
-    "appendix",
     "paragraph",
     "item",
     "sub_item",
-    "appendix_item",
-    "entity"
+    "segment",
+    "appendix"
   ],
   "level_to_node_type": {
     "document": "DocumentNode",
@@ -26,27 +23,21 @@
     "chapter": "TocNode",
     "section": "TocNode",
     "article": "ProvisionNode",
-    "appendix": "AppendixNode",
     "paragraph": "ProvisionNode",
     "item": "ProvisionNode",
     "sub_item": "ProvisionNode",
-    "appendix_item": "AppendixItemNode",
-    "entity": "EntityNode"
+    "segment": "ProvisionNode",
+    "appendix": "AppendixNode"
   },
-  "entity_types": [
-    "subject",
-    "action",
-    "condition",
-    "penalty",
-    "concept"
-  ],
   "node_type_fields": {
     "DocumentNode": [
       "id",
       "type",
       "name",
       "level",
-      "source_id",
+      "document_type",
+      "document_subtype",
+      "status",
       "metadata"
     ],
     "TocNode": [
@@ -54,8 +45,6 @@
       "type",
       "name",
       "level",
-      "source_id",
-      "summary",
       "metadata"
     ],
     "ProvisionNode": [
@@ -63,20 +52,7 @@
       "type",
       "name",
       "level",
-      "source_id",
       "text",
-      "summary",
-      "metadata"
-    ],
-    "EntityNode": [
-      "id",
-      "type",
-      "name",
-      "level",
-      "source_id",
-      "summary",
-      "description",
-      "embedding_ref",
       "metadata"
     ],
     "AppendixNode": [
@@ -84,159 +60,160 @@
       "type",
       "name",
       "level",
-      "source_id",
       "text",
-      "summary",
-      "metadata"
-    ],
-    "AppendixItemNode": [
-      "id",
-      "type",
-      "name",
-      "level",
-      "source_id",
-      "text",
-      "summary",
       "metadata"
     ]
   },
   "edge_types": [
-    "HAS_PART",
-    "HAS_CHAPTER",
-    "HAS_SECTION",
-    "HAS_ARTICLE",
-    "HAS_APPENDIX",
-    "HAS_PARAGRAPH",
-    "HAS_ITEM",
-    "HAS_APPENDIX_ITEM",
-    "HAS_SUB_ITEM",
-    "HAS_ENTITY",
-    "HAS_ACTION",
-    "WITH_CONDITION",
-    "HAS_PENALTY",
-    "REFERENCE_TO",
-    "SAME_AS"
+    "HAS_CHILD",
+    "REFERS_TO",
+    "INTERPRETS",
+    "AMENDS",
+    "REPEALS"
   ],
   "edge_type_categories": {
-    "HAS_PART": "structural",
-    "HAS_CHAPTER": "structural",
-    "HAS_SECTION": "structural",
-    "HAS_ARTICLE": "structural",
-    "HAS_APPENDIX": "structural",
-    "HAS_PARAGRAPH": "structural",
-    "HAS_ITEM": "structural",
-    "HAS_APPENDIX_ITEM": "structural",
-    "HAS_SUB_ITEM": "structural",
-    "HAS_ENTITY": "explicit_semantic",
-    "HAS_ACTION": "explicit_semantic",
-    "WITH_CONDITION": "explicit_semantic",
-    "HAS_PENALTY": "explicit_semantic",
-    "REFERENCE_TO": "explicit_semantic",
-    "SAME_AS": "explicit_semantic"
+    "HAS_CHILD": "structural",
+    "REFERS_TO": "normative",
+    "INTERPRETS": "normative",
+    "AMENDS": "normative",
+    "REPEALS": "normative"
   },
   "structural_edges": [
     {
       "parent_level": "document",
       "child_level": "part",
-      "edge_type": "HAS_PART"
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "part",
       "child_level": "chapter",
-      "edge_type": "HAS_CHAPTER"
+      "edge_type": "HAS_CHILD"
+    },
+    {
+      "parent_level": "document",
+      "child_level": "chapter",
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "chapter",
       "child_level": "section",
-      "edge_type": "HAS_SECTION"
+      "edge_type": "HAS_CHILD"
+    },
+    {
+      "parent_level": "document",
+      "child_level": "section",
+      "edge_type": "HAS_CHILD"
+    },
+    {
+      "parent_level": "part",
+      "child_level": "section",
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "document",
       "child_level": "article",
-      "edge_type": "HAS_ARTICLE"
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "part",
       "child_level": "article",
-      "edge_type": "HAS_ARTICLE"
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "chapter",
       "child_level": "article",
-      "edge_type": "HAS_ARTICLE"
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "section",
       "child_level": "article",
-      "edge_type": "HAS_ARTICLE"
-    },
-    {
-      "parent_level": "document",
-      "child_level": "appendix",
-      "edge_type": "HAS_APPENDIX"
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "article",
       "child_level": "paragraph",
-      "edge_type": "HAS_PARAGRAPH"
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "article",
       "child_level": "item",
-      "edge_type": "HAS_ITEM"
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "paragraph",
       "child_level": "item",
-      "edge_type": "HAS_ITEM"
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "item",
       "child_level": "sub_item",
-      "edge_type": "HAS_SUB_ITEM"
+      "edge_type": "HAS_CHILD"
+    },
+    {
+      "parent_level": "document",
+      "child_level": "segment",
+      "edge_type": "HAS_CHILD"
+    },
+    {
+      "parent_level": "part",
+      "child_level": "segment",
+      "edge_type": "HAS_CHILD"
+    },
+    {
+      "parent_level": "chapter",
+      "child_level": "segment",
+      "edge_type": "HAS_CHILD"
+    },
+    {
+      "parent_level": "section",
+      "child_level": "segment",
+      "edge_type": "HAS_CHILD"
+    },
+    {
+      "parent_level": "article",
+      "child_level": "segment",
+      "edge_type": "HAS_CHILD"
+    },
+    {
+      "parent_level": "segment",
+      "child_level": "item",
+      "edge_type": "HAS_CHILD"
+    },
+    {
+      "parent_level": "document",
+      "child_level": "appendix",
+      "edge_type": "HAS_CHILD"
     },
     {
       "parent_level": "appendix",
-      "child_level": "appendix_item",
-      "edge_type": "HAS_APPENDIX_ITEM"
+      "child_level": "segment",
+      "edge_type": "HAS_CHILD"
     }
   ],
   "allowed_outgoing_edges": {
     "DocumentNode": [
-      "HAS_PART",
-      "HAS_ARTICLE",
-      "HAS_APPENDIX"
+      "HAS_CHILD",
+      "REFERS_TO",
+      "INTERPRETS",
+      "AMENDS",
+      "REPEALS"
     ],
     "TocNode": [
-      "HAS_CHAPTER",
-      "HAS_SECTION",
-      "HAS_ARTICLE"
+      "HAS_CHILD"
     ],
     "ProvisionNode": [
-      "HAS_PARAGRAPH",
-      "HAS_ITEM",
-      "HAS_SUB_ITEM",
-      "HAS_ENTITY",
-      "REFERENCE_TO",
-      "SAME_AS"
-    ],
-    "EntityNode": [
-      "HAS_ACTION",
-      "WITH_CONDITION",
-      "HAS_PENALTY",
-      "REFERENCE_TO",
-      "SAME_AS"
+      "HAS_CHILD",
+      "REFERS_TO",
+      "INTERPRETS",
+      "AMENDS",
+      "REPEALS"
     ],
     "AppendixNode": [
-      "HAS_APPENDIX_ITEM",
-      "HAS_ENTITY",
-      "REFERENCE_TO",
-      "SAME_AS"
-    ],
-    "AppendixItemNode": [
-      "HAS_ENTITY",
-      "REFERENCE_TO",
-      "SAME_AS"
+      "HAS_CHILD",
+      "REFERS_TO",
+      "INTERPRETS",
+      "AMENDS",
+      "REPEALS"
     ]
   }
 }

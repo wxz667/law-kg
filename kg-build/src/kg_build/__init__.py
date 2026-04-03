@@ -1,5 +1,5 @@
-"""Criminal Law Tree-KG build framework."""
+"""Structure-first legal knowledge base builder."""
 
-from .pipeline.builder import build_knowledge_graph
+from .pipeline.builder import build_batch_knowledge_graph, build_knowledge_graph
 
-__all__ = ["build_knowledge_graph"]
+__all__ = ["build_batch_knowledge_graph", "build_knowledge_graph"]
