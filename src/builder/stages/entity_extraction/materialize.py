@@ -6,7 +6,7 @@ from ...utils.ids import slugify
 
 def append_concept_candidate(graph_bundle, *, node, prediction, concept_counter: int) -> None:
     normalized_text = prediction.normalized_text or prediction.text
-    concept_id = f"concept_candidate:{slugify(graph_bundle.document_id)}:{concept_counter:04d}"
+    concept_id = f"concept_candidate:{concept_counter:04d}"
     graph_bundle.nodes.append(
         NodeRecord(
             id=concept_id,
@@ -14,17 +14,11 @@ def append_concept_candidate(graph_bundle, *, node, prediction, concept_counter:
             name=normalized_text,
             level="concept",
             text=prediction.text,
-            metadata={
-                "candidate": True,
-                "alignment_status": "pending",
-                "label": prediction.label,
-                "model": prediction.model,
-                "start_offset": prediction.start_offset,
-                "end_offset": prediction.end_offset,
-                "aliases": [prediction.text],
-                "normalized_text": normalized_text,
-                "order": concept_counter,
-            },
+            candidate=True,
+            alignment_status="pending",
+            aliases=[prediction.text],
+            normalized_text=normalized_text,
+            order=concept_counter,
         )
     )
     graph_bundle.edges.append(
@@ -33,11 +27,9 @@ def append_concept_candidate(graph_bundle, *, node, prediction, concept_counter:
             source=node.id,
             target=concept_id,
             type="MENTIONS",
-            metadata={
-                "predicted": False,
-                "label": prediction.label,
-                "start_offset": prediction.start_offset,
-                "end_offset": prediction.end_offset,
-            },
+            label=prediction.label,
+            model=prediction.model,
+            start_offset=prediction.start_offset,
+            end_offset=prediction.end_offset,
         )
     )

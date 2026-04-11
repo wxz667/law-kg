@@ -8,15 +8,17 @@ version = "0.1.0"
 description = "Five-stage legal knowledge graph builder."
 requires-python = ">=3.10"
 dependencies = [
+  "accelerate==1.13.0",
   "datasets>=4.8.4",
+  "huggingface_hub>=1.0.0,<2",
   "httpx==0.28.1",
   "pandas>=2.3.3",
   "python-docx==1.2.0",
   "rich==14.1.0",
   "scikit-learn>=1.7.2",
-  "torch>=2.11.0",
+  "torch==2.11.0",
   "tqdm>=4.67.3",
-  "transformers>=5.5.0",
+  "transformers==5.5.0",
 ]
 
 [project.scripts]

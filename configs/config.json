@@ -1,0 +1,116 @@
+{
+  "interprets_filter": {
+    "dataset": {
+      "max_samples": 1500,
+      "label_weights": {
+        "true": 0.5,
+        "false": 0.5
+      },
+      "candidate_pool_multiplier": 12.0,
+      "candidate_pool_minimum": 1200,
+      "adaptive_sampling": {
+        "enabled": true,
+        "oversample_factor": 5.0,
+        "min_positive_hint_precision": 0.15,
+        "min_negative_hint_precision": 0.85,
+        "max_in_flight_batches": 4
+      },
+      "splits": {
+        "train": 0.8,
+        "dev": 0.1,
+        "test": 0.1
+      },
+      "random_seed": 42,
+      "review_sample_size": 20
+    },
+    "distill": {
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "concurrent_requests": 4,
+      "batch_size": 4,
+      "request_timeout_seconds": 90,
+      "max_retries": 2,
+      "params": {
+        "temperature": 0.0,
+        "max_tokens": 512
+      }
+    },
+    "train": {
+      "backbone_model": "hfl/chinese-roberta-wwm-ext",
+      "device_preference": "cuda",
+      "mixed_precision": "auto",
+      "max_length": 512,
+      "num_train_epochs": 1,
+      "learning_rate": 2e-05,
+      "train_batch_size": 4,
+      "eval_batch_size": 8,
+      "weight_decay": 0.01,
+      "warmup_ratio": 0.1,
+      "seed": 42,
+      "logging_steps": 10,
+      "save_total_limit": 1,
+      "dataloader_pin_memory": true,
+      "dataloader_num_workers": 2,
+      "target_recall": 0.9,
+      "target_precision": 0.85,
+      "threshold_selection_mode": "precision_first",
+      "threshold_grid": [
+        0.25,
+        0.3,
+        0.35,
+        0.4,
+        0.45,
+        0.5,
+        0.55,
+        0.6
+      ]
+    },
+    "predict": {
+      "default_model_dir": "models/interprets_filter",
+      "max_length": 512,
+      "threshold": 0.5
+    },
+    "hub": {
+      "model_repo_id": "",
+      "model_revision": "main",
+      "dataset_repo_id": "",
+      "dataset_revision": "main"
+    }
+  },
+  "builder": {
+    "normalize": {
+      "checkpoint_every": 100
+    },
+    "structure": {
+      "checkpoint_every": 100
+    },
+    "reference_filter": {
+      "document_workers": 0,
+      "checkpoint_every": 400,
+      "profiling": {
+        "enabled": true
+      }
+    },
+    "relation_classify": {
+      "checkpoint_every": 400,
+      "interprets_filter_policy": {
+        "high_confidence_true_threshold": 0.8,
+        "low_confidence_false_threshold": 0.35,
+        "use_llm_for_uncertain": true,
+        "prediction_batch_size": 128
+      },
+      "llm_conflict": {
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "batch_size": 4,
+        "concurrent_requests": 4,
+        "request_timeout_seconds": 90,
+        "max_retries": 2,
+        "params": {
+          "temperature": 0.0,
+          "max_tokens": 512
+        }
+      }
+    }
+  }
+}

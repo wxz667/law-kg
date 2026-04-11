@@ -11,6 +11,10 @@ SECTION_RE = re.compile(r"^第[一二三四五六七八九十百零]+节(?:\s*.+
 ARTICLE_RE = re.compile(
     r"^(第[一二三四五六七八九十百千万零两〇0-9]+条(?:之[一二三四五六七八九十百千万零两〇0-9]+)?)(?:[\s　]+(.*))?$"
 )
+ARTICLE_TITLE_SUFFIX_RE = re.compile(
+    r"^第[一二三四五六七八九十百千万零两〇0-9]+条"
+    r"(?:、第[一二三四五六七八九十百千万零两〇0-9]+条)*的解释$"
+)
 APPENDIX_RE = re.compile(r"^附件([一二三四五六七八九十百千万零两〇0-9]+)$")
 ITEM_MARKER_RE = re.compile(r"((?:（|\()[一二三四五六七八九十]+(?:）|\))|[一二三四五六七八九十]+、)")
 SUB_ITEM_MARKER_RE = re.compile(r"((?:[0-9０-９]+[.．、])|(?:（|\()[0-9０-９]+(?:）|\)))")
@@ -26,6 +30,14 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
+def normalize_heading_text(text: str) -> str:
+    return (text or "").replace(" ", "").replace("　", "").strip()
+
+
+def compact_text_key(text: str) -> str:
+    return re.sub(r"\s+", "", (text or "").replace("\u3000", " ").strip())
+
+
 def match_heading_level(line: str) -> str | None:
     if PART_RE.match(line):
         return "part"
@@ -39,7 +51,16 @@ def match_heading_level(line: str) -> str | None:
 
 
 def normalize_segment_heading(text: str) -> str:
-    return text.replace(" ", "").replace("　", "")
+    return normalize_heading_text(text)
+
+
+def is_structural_body_start(line: str) -> bool:
+    return bool(
+        PART_RE.match(line)
+        or CHAPTER_RE.match(line)
+        or SECTION_RE.match(line)
+        or ARTICLE_RE.match(line)
+    )
 
 
 def looks_like_heading_continuation(text: str) -> bool:

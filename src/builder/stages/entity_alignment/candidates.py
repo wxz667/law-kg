@@ -5,7 +5,7 @@ def collect_candidate_nodes(graph_bundle) -> list[object]:
     return [
         node
         for node in graph_bundle.nodes
-        if node.level == "concept" and node.metadata.get("candidate") is True
+        if node.level == "concept" and node.candidate is True
     ]
 
 

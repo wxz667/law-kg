@@ -7,7 +7,7 @@
 当前构建期不接数据库。正式产物统一以 JSON 为准：
 
 - `normalize` 先输出逐文档清洗结果
-- `structure_graph` 起输出标准 `graph_bundle-*.json`
+- `sturctre` 起输出标准 `graph_bundle-*.json`
 - 后续阶段只在图上做增量处理
 
 ## 目录约定
@@ -16,10 +16,10 @@
 - 主构建包固定为 `src/builder/`
 - crawler 采集模块固定为 `src/crawler/`
 - 可训练模型模块固定为：
-  - `src/relation_classifier/`
+  - `src/interprets_filter/`
   - `src/ner/`
   - `src/rgcn/`
-- 图谱 schema 固定为 `resources/schema.json`
+- 图谱 schema 固定为 `configs/schema.json`
 - builder 输入固定来自：
   - `data/source/docs/`
   - `data/source/metadata/`
@@ -61,7 +61,7 @@
 - `appendix_lines`
 - metadata 中除 `source_format` 外的其余字段
 
-### 阶段二：`structure_graph`
+### 阶段二：`sturctre`
 
 职责：
 
@@ -89,29 +89,40 @@
 
 正式产物：
 
-- `data/intermediate/02_structure_graph/graph_bundle-0001.json`
+- `data/intermediate/02_sturctre/graph_bundle-0001.json`
 
-### 阶段三：`explicit_relations`
+### 阶段三：`reference_filter`
 
 职责：
 
 - 从结构节点文本中抽取显式交叉引用候选
 - 识别 `《法名》第X条`、`本法第X条`、`本条`、`本款`、`前款` 等引用
-- 调用 `relation_classifier` 预测关系类型
-- 将可解析的显式关系边补入图
+- 对 target 做完整展开、规范化重写和 `[T][/T]` 标记
+- 输出候选工件，不在本阶段直接构边
+
+正式产物：
+
+- `data/intermediate/03_reference_filter/candidates.jsonl`
+
+### 阶段四：`relation_classify`
+
+职责：
+
+- 对 `reference_filter` 候选做关系判别
+- 非司法解释来源一律输出 `REFERENCES`
+- 司法解释来源走 `interprets_filter` 阈值判别与可选 LLM 仲裁
+- 输出关系计划工件，最终导出时再统一物化为图边
 
 关系类型固定为：
 
 - `REFERENCES`
 - `INTERPRETS`
-- `AMENDS`
-- `REPEALS`
 
 正式产物：
 
-- `data/intermediate/03_explicit_relations/graph_bundle-0001.json`
+- `data/intermediate/04_relation_classify/relation_plans.jsonl`
 
-### 阶段四：`entity_extraction`
+### 阶段五：`entity_extraction`
 
 职责：
 
@@ -121,9 +132,9 @@
 
 正式产物：
 
-- `data/intermediate/04_entity_extraction/graph_bundle-0001.json`
+- `data/intermediate/05_entity_extraction/graph_bundle-0001.json`
 
-### 阶段五：`entity_alignment`
+### 阶段六：`entity_alignment`
 
 职责：
 
@@ -140,7 +151,7 @@
 
 - `data/intermediate/05_entity_alignment/graph_bundle-0001.json`
 
-### 阶段六：`implicit_reasoning`
+### 阶段七：`implicit_reasoning`
 
 职责：
 
@@ -165,7 +176,7 @@
 
 其中 `appendix` 只是 `ProvisionNode` 的一种 `level`，不是独立节点类型。
 
-当前 `DocumentNode` 顶层字段以 `resources/schema.json` 为准，当前稳定字段为：
+当前 `DocumentNode` 顶层字段以 `configs/schema.json` 为准，当前稳定字段为：
 
 - `id`
 - `type`
@@ -199,7 +210,7 @@
 
 只有需要训练的小模型拆成独立同级模块：
 
-- `relation_classifier`
+- `interprets_filter`
 - `ner`
 - `rgcn`
 
@@ -224,11 +235,12 @@
 
 - `01_normalize/documents/{source_id}.json`
 - `01_normalize/normalize_index.json`
-- `02_structure_graph/graph_bundle-0001.json`
-- `03_explicit_relations/graph_bundle-0001.json`
-- `04_entity_extraction/graph_bundle-0001.json`
-- `05_entity_alignment/graph_bundle-0001.json`
-- `06_implicit_reasoning/graph_bundle-0001.json`
+- `02_sturctre/graph_bundle-0001.json`
+- `03_reference_filter/candidates.jsonl`
+- `04_relation_classify/relation_plans.jsonl`
+- `05_entity_extraction/graph_bundle-0001.json`
+- `06_entity_alignment/graph_bundle-0001.json`
+- `07_implicit_reasoning/graph_bundle-0001.json`
 
 后续导入流程由拆分脚本负责：
 
@@ -259,8 +271,9 @@ CLI 语义固定为：
 阶段名固定为：
 
 - `normalize`
-- `structure_graph`
-- `explicit_relations`
+- `sturctre`
+- `reference_filter`
+- `relation_classify`
 - `entity_extraction`
 - `entity_alignment`
 - `implicit_reasoning`

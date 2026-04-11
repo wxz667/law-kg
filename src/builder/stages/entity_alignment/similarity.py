@@ -19,8 +19,8 @@ def collect_candidate_pairs(candidate_nodes: list[object], vectors: list[list[fl
         left = candidate_nodes[left_index]
         right = candidate_nodes[right_index]
         similarity = cosine_similarity(vectors[left_index], vectors[right_index])
-        left_text = str(left.metadata.get("normalized_text", left.name))
-        right_text = str(right.metadata.get("normalized_text", right.name))
+        left_text = str(left.normalized_text or left.name)
+        right_text = str(right.normalized_text or right.name)
         if left_text == right_text or similarity >= 0.72:
             candidate_pairs.append(
                 {

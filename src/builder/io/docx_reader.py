@@ -14,21 +14,20 @@ from docx.table import Table, _Cell
 from docx.text.paragraph import Paragraph
 
 from ..utils.ids import checksum_text, slugify
+from ..utils.document_layout import (
+    APPENDIX_RE,
+    ARTICLE_RE,
+    ARTICLE_TITLE_SUFFIX_RE,
+    CHAPTER_RE,
+    PART_RE,
+    SECTION_RE,
+    is_structural_body_start,
+    normalize_heading_text as normalize_heading,
+)
 from ..utils.numbers import int_to_cn
 from ..contracts import LogicalDocumentRecord, PhysicalSourceRecord
 
 OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
-PART_RE = re.compile(r"^第[一二三四五六七八九十百零]+编(?:[\s　]+.+)?$")
-CHAPTER_RE = re.compile(r"^第[一二三四五六七八九十百零]+章(?:[\s　]+.+)?$")
-SECTION_RE = re.compile(r"^第[一二三四五六七八九十百零]+节(?:[\s　]+.+)?$")
-ARTICLE_RE = re.compile(
-    r"^第[一二三四五六七八九十百千万零两〇0-9]+条(?:之[一二三四五六七八九十百千万零两〇0-9]+)?(?:$|[\s　]+.+$)"
-)
-ARTICLE_TITLE_SUFFIX_RE = re.compile(
-    r"^第[一二三四五六七八九十百千万零两〇0-9]+条"
-    r"(?:、第[一二三四五六七八九十百千万零两〇0-9]+条)*的解释$"
-)
-APPENDIX_RE = re.compile(r"^附件[一二三四五六七八九十百千万零两〇0-9]+$")
 DATE_RE = re.compile(r"(\d{4}年\d{1,2}月\d{1,2}日)")
 PAREN_DATE_LINE_RE = re.compile(r"^[（(]\d{4}年\d{1,2}月\d{1,2}日.*[）)]$")
 EFFECTIVE_DATE_RE = re.compile(r"自(\d{4}年\d{1,2}月\d{1,2}日)起(?:施行|实施|执行)")
@@ -1347,19 +1346,6 @@ def find_repeated_toc_heading_index(paragraphs: list[str], toc_index: int) -> in
         if normalized in unique_toc_lines:
             return index
     return None
-
-
-def is_structural_body_start(line: str) -> bool:
-    return bool(
-        PART_RE.match(line)
-        or CHAPTER_RE.match(line)
-        or SECTION_RE.match(line)
-        or ARTICLE_RE.match(line)
-    )
-
-
-def normalize_heading(text: str) -> str:
-    return text.replace(" ", "").replace("　", "")
 
 
 def parse_revision_events(preface_text: str, *, title: str = "") -> list[dict[str, str]]:

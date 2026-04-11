@@ -10,10 +10,6 @@ def project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def repo_root() -> Path:
-    return project_root()
-
-
 def timestamp_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -31,8 +27,3 @@ def checksum_text(text: str) -> str:
 
 def checksum_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def build_id_from_source(source_path: Path) -> str:
-    digest = checksum_file(source_path)[:12]
-    return f"build-{slugify(source_path.stem)}-{digest}"

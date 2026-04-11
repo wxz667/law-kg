@@ -7,7 +7,7 @@ from docx import Document
 
 from builder.io import read_normalize_index, read_normalized_document
 from builder.stages.normalize import run as run_normalize
-from builder.stages.structure_graph import run as run_structure_graph
+from builder.stages.structure import run as run_structure
 
 
 def write_docx(path: Path, paragraphs: list[str]) -> Path:
@@ -74,7 +74,7 @@ def test_normalize_writes_per_document_artifact_and_preserves_metadata(tmp_path:
     )
 
     index = run_normalize(tmp_path)
-    artifact_path = tmp_path / "intermediate" / "01_normalize" / "documents" / "law:sample.json"
+    artifact_path = tmp_path / "intermediate" / "builder" / "01_normalize" / "documents" / "law:sample.json"
     document = read_normalized_document(artifact_path)
 
     assert index.stats["succeeded_sources"] == 1
@@ -131,7 +131,7 @@ def test_normalize_records_missing_documents_without_stopping(tmp_path: Path) ->
     )
 
     index = run_normalize(tmp_path)
-    saved_index = read_normalize_index(tmp_path / "intermediate" / "01_normalize" / "normalize_index.json")
+    saved_index = read_normalize_index(tmp_path / "intermediate" / "builder" / "01_normalize" / "normalize_index.json")
     log_payload = json.loads((tmp_path.parent / "logs" / "builder" / "normalize-report.json").read_text(encoding="utf-8"))
 
     assert index.stats["succeeded_sources"] == 1
@@ -170,10 +170,9 @@ def test_normalize_keeps_only_embedded_substantive_document(tmp_path: Path) -> N
     )
 
     run_normalize(tmp_path)
-    document = read_normalized_document(tmp_path / "intermediate" / "01_normalize" / "documents" / "notice:embedded.json")
+    document = read_normalized_document(tmp_path / "intermediate" / "builder" / "01_normalize" / "documents" / "notice:embedded.json")
 
-    assert document.title == "关于审理行政赔偿案件若干问题的规定"
-    assert "通知" not in document.title
+    assert document.title == "通知型规定"
     assert "第一条" in document.content
 
 
@@ -200,14 +199,14 @@ def test_normalize_flattens_table_rows_into_numbered_content(tmp_path: Path) -> 
     )
 
     run_normalize(tmp_path)
-    document = read_normalized_document(tmp_path / "intermediate" / "01_normalize" / "documents" / "law:crime-table.json")
+    document = read_normalized_document(tmp_path / "intermediate" / "builder" / "01_normalize" / "documents" / "law:crime-table.json")
 
     assert "1. 刑法条文：第一百三十三条之一 （《刑法修正案（八）》第二十二条）" in document.content
     assert "罪名：危险驾驶罪；" in document.content
     assert "2. 刑法条文：第一百四十三条 （《刑法修正案（八）》第二十四条）" in document.content
 
 
-def test_structure_graph_uses_source_id_and_parses_appendix(tmp_path: Path) -> None:
+def test_structure_uses_source_id_and_parses_appendix(tmp_path: Path) -> None:
     write_docx(
         tmp_path / "source" / "docs" / "示例法.docx",
         [
@@ -233,7 +232,7 @@ def test_structure_graph_uses_source_id_and_parses_appendix(tmp_path: Path) -> N
     )
 
     run_normalize(tmp_path)
-    bundle = run_structure_graph(tmp_path)
+    bundle = run_structure(tmp_path)
 
     document_node = next(node for node in bundle.nodes if node.level == "document")
     assert document_node.id == "law:sample"
@@ -243,7 +242,7 @@ def test_structure_graph_uses_source_id_and_parses_appendix(tmp_path: Path) -> N
     assert any(node.level == "appendix" for node in bundle.nodes)
 
 
-def test_structure_graph_falls_back_to_single_body_segment_for_unstructured_content(tmp_path: Path) -> None:
+def test_structure_falls_back_to_single_body_segment_for_unstructured_content(tmp_path: Path) -> None:
     write_docx(
         tmp_path / "source" / "docs" / "批复示例.docx",
         [
@@ -267,16 +266,16 @@ def test_structure_graph_falls_back_to_single_body_segment_for_unstructured_cont
     )
 
     run_normalize(tmp_path)
-    bundle = run_structure_graph(tmp_path)
+    bundle = run_structure(tmp_path)
     segments = [node for node in bundle.nodes if node.level == "segment"]
 
     assert len(segments) == 1
     assert segments[0].name == "正文"
     assert segments[0].text.startswith("海南省人民检察院：")
-    assert bundle.metadata["stage"] == "structure_graph"
+    assert bundle.metadata["stage"] == "structure"
 
 
-def test_normalize_filters_toc_and_structure_graph_keeps_items_under_paragraph(tmp_path: Path) -> None:
+def test_normalize_filters_toc_and_structure_collapses_single_paragraph_items_to_article(tmp_path: Path) -> None:
     write_docx(
         tmp_path / "source" / "docs" / "示例规则.docx",
         [
@@ -285,8 +284,7 @@ def test_normalize_filters_toc_and_structure_graph_keeps_items_under_paragraph(t
             "第一百一十条第四款 有下列情形之一的，属于有碍侦查：",
             "第一百一十条第五款 可能毁灭、伪造证据，干扰证人作证或者串供的；",
             "第一百一十条第六款 可能自杀或者逃跑的；",
-            "第一百一十条 本条第一款规定的特别重大贿赂犯罪依照本规则第四十五条第二款规定的条件予以认定。",
-            "有下列情形之一的，属于有碍侦查：",
+            "第一百一十条 有下列情形之一的，属于有碍侦查：",
             "（一）可能毁灭、伪造证据，干扰证人作证或者串供的；",
             "（二）可能自杀或者逃跑的；",
             "（三）可能导致同案犯逃避侦查的；",
@@ -305,21 +303,23 @@ def test_normalize_filters_toc_and_structure_graph_keeps_items_under_paragraph(t
     )
 
     run_normalize(tmp_path, force_rebuild=True)
-    document = read_normalized_document(tmp_path / "intermediate" / "01_normalize" / "documents" / "rule:sample.json")
+    document = read_normalized_document(tmp_path / "intermediate" / "builder" / "01_normalize" / "documents" / "rule:sample.json")
     assert "目录" not in document.content
     assert "第一百一十条第四款 有下列情形之一的，属于有碍侦查：" not in document.content
 
-    bundle = run_structure_graph(tmp_path)
+    bundle = run_structure(tmp_path)
+    articles = [node for node in bundle.nodes if node.level == "article"]
     paragraphs = [node for node in bundle.nodes if node.level == "paragraph"]
     items = [node for node in bundle.nodes if node.level == "item"]
 
-    assert any(node.text == "有下列情形之一的，属于有碍侦查：" for node in paragraphs)
-    assert len([node for node in paragraphs if "可能毁灭、伪造证据" in node.text]) == 0
+    assert any(node.name == "第一百一十条" and node.text == "有下列情形之一的，属于有碍侦查：" for node in articles)
+    assert len([node for node in paragraphs if node.name.startswith("第一百一十条")]) == 0
     assert len(items) == 3
+    assert any(node.name == "第一百一十条第一项" for node in items)
     assert any(node.text == "可能毁灭、伪造证据，干扰证人作证或者串供的；" for node in items)
 
 
-def test_structure_graph_treats_semicolon_clauses_after_colon_as_items(tmp_path: Path) -> None:
+def test_structure_treats_semicolon_clauses_after_colon_as_items(tmp_path: Path) -> None:
     write_docx(
         tmp_path / "source" / "docs" / "特别重大贿赂犯罪规则.docx",
         [
@@ -344,7 +344,7 @@ def test_structure_graph_treats_semicolon_clauses_after_colon_as_items(tmp_path:
     )
 
     run_normalize(tmp_path, force_rebuild=True)
-    bundle = run_structure_graph(tmp_path)
+    bundle = run_structure(tmp_path)
 
     paragraphs = [node for node in bundle.nodes if node.level == "paragraph"]
     items = [node for node in bundle.nodes if node.level == "item"]

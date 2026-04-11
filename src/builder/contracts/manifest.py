@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -50,7 +50,7 @@ class StageRecord:
 
 
 @dataclass
-class JobManifest:
+class JobLogRecord:
     job_id: str
     build_target: str
     data_root: str
@@ -61,7 +61,7 @@ class JobManifest:
     source_count: int
     finished_at: str = ""
     stages: list[StageRecord] = field(default_factory=list)
-    final_graph_path: str = ""
+    final_artifact_paths: dict[str, str] = field(default_factory=dict)
     stats: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -76,12 +76,12 @@ class JobManifest:
             "source_count": self.source_count,
             "finished_at": self.finished_at,
             "stages": [stage.to_dict() for stage in self.stages],
-            "final_graph_path": self.final_graph_path,
+            "final_artifact_paths": self.final_artifact_paths,
             "stats": self.stats,
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "JobManifest":
+    def from_dict(cls, payload: dict[str, Any]) -> "JobLogRecord":
         return cls(
             job_id=payload["job_id"],
             build_target=payload["build_target"],
@@ -93,9 +93,55 @@ class JobManifest:
             source_count=int(payload.get("source_count", 0)),
             finished_at=payload.get("finished_at", ""),
             stages=[StageRecord.from_dict(item) for item in payload.get("stages", [])],
-            final_graph_path=payload.get("final_graph_path", ""),
+            final_artifact_paths=dict(payload.get("final_artifact_paths", {})),
             stats=dict(payload.get("stats", {})),
         )
 
 
-BuildManifest = JobManifest
+@dataclass
+class StageStateManifest:
+    stage_name: str
+    build_target: str
+    data_root: str
+    job_id: str = ""
+    status: str = ""
+    source_ids: list[str] = field(default_factory=list)
+    processed_source_ids: list[str] = field(default_factory=list)
+    artifact_paths: dict[str, str] = field(default_factory=dict)
+    input_node_stage: str = ""
+    input_edge_stage: str = ""
+    updated_at: str = ""
+    stats: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "stage_name": self.stage_name,
+            "build_target": self.build_target,
+            "data_root": self.data_root,
+            "job_id": self.job_id,
+            "status": self.status,
+            "source_ids": list(self.source_ids),
+            "processed_source_ids": list(self.processed_source_ids),
+            "artifact_paths": dict(self.artifact_paths),
+            "input_node_stage": self.input_node_stage,
+            "input_edge_stage": self.input_edge_stage,
+            "updated_at": self.updated_at,
+            "stats": dict(self.stats),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "StageStateManifest":
+        return cls(
+            stage_name=payload["stage_name"],
+            build_target=payload.get("build_target", ""),
+            data_root=payload.get("data_root", ""),
+            job_id=payload.get("job_id", ""),
+            status=payload.get("status", ""),
+            source_ids=[str(value) for value in payload.get("source_ids", [])],
+            processed_source_ids=[str(value) for value in payload.get("processed_source_ids", [])],
+            artifact_paths=dict(payload.get("artifact_paths", {})),
+            input_node_stage=payload.get("input_node_stage", ""),
+            input_edge_stage=payload.get("input_edge_stage", ""),
+            updated_at=payload.get("updated_at", ""),
+            stats=dict(payload.get("stats", {})),
+        )

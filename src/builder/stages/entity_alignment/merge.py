@@ -35,11 +35,11 @@ def build_canonical_graph_parts(graph_bundle, candidate_nodes: list[object], par
         members = [candidate for candidate in candidate_nodes if candidate.id in member_ids]
         aliases = sorted({member.text or member.name for member in members if member.text or member.name})
         normalized_values = sorted(
-            {str(member.metadata.get("normalized_text", member.name)) for member in members if member.name}
+            {str(member.normalized_text or member.name) for member in members if member.name}
         )
         canonical_name = normalized_values[0] if normalized_values else aliases[0]
         source_node_ids = sorted({parent_by_child[member.id] for member in members if member.id in parent_by_child})
-        canonical_id = f"concept:{slugify(graph_bundle.document_id)}:{index:04d}"
+        canonical_id = f"concept:{index:04d}"
         canonical_nodes.append(
             NodeRecord(
                 id=canonical_id,
@@ -47,14 +47,11 @@ def build_canonical_graph_parts(graph_bundle, candidate_nodes: list[object], par
                 name=canonical_name,
                 level="concept",
                 text=" / ".join(aliases or [canonical_name]),
-                metadata={
-                    "aliases": aliases or [canonical_name],
-                    "normalized_values": normalized_values or [canonical_name],
-                    "source_members": member_ids,
-                    "candidate": False,
-                    "alignment_status": "canonical",
-                    "order": index,
-                },
+                aliases=aliases or [canonical_name],
+                normalized_values=normalized_values or [canonical_name],
+                source_members=member_ids,
+                alignment_status="canonical",
+                order=index,
             )
         )
         for source_node_id in source_node_ids:
@@ -64,7 +61,7 @@ def build_canonical_graph_parts(graph_bundle, candidate_nodes: list[object], par
                     source=source_node_id,
                     target=canonical_id,
                     type="MENTIONS",
-                    metadata={"predicted": False, "canonical": True},
+                    canonical=True,
                 )
             )
     return canonical_nodes, canonical_edges

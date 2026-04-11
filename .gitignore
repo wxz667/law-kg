@@ -4,6 +4,8 @@
 __pycache__/
 *.pyc
 *.egg-info/
+models/interprets_filter/
+models/**/checkpoints/
 data/**
 !data/**/
 !data/**/.gitkeep
@@ -19,3 +21,4 @@ lib/neo4j/logs/**
 lib/neo4j/plugins/**
 !lib/neo4j/plugins/**/
 !lib/neo4j/plugins/.gitkeep
+tests/

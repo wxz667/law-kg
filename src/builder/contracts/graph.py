@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field, fields
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
-from ..utils.ids import project_root, slugify
+from ..utils.ids import project_root
 
 
 @lru_cache(maxsize=1)
 def load_graph_schema() -> dict[str, Any]:
-    path = Path(project_root()) / "resources" / "schema.json"
+    path = Path(project_root()) / "configs" / "schema.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -57,52 +58,6 @@ def _structural_edge_types() -> set[str]:
 
 
 @dataclass
-class PhysicalSourceRecord:
-    source_id: str
-    title: str
-    source_path: str
-    source_type: str
-    checksum: str
-    paragraphs: list[str] = field(default_factory=list)
-    preface_text: str = ""
-    toc_lines: list[str] = field(default_factory=list)
-    body_lines: list[str] = field(default_factory=list)
-    appendix_lines: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "PhysicalSourceRecord":
-        field_names = {item.name for item in fields(cls)}
-        filtered = {key: value for key, value in payload.items() if key in field_names}
-        return cls(**filtered)
-
-
-SourceDocumentRecord = PhysicalSourceRecord
-
-
-@dataclass
-class LogicalDocumentRecord:
-    source_id: str
-    title: str
-    source_type: str
-    paragraphs: list[str] = field(default_factory=list)
-    appendix_lines: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "LogicalDocumentRecord":
-        field_names = {item.name for item in fields(cls)}
-        filtered = {key: value for key, value in payload.items() if key in field_names}
-        return cls(**filtered)
-
-
-@dataclass
 class NodeRecord:
     id: str
     type: str
@@ -110,15 +65,19 @@ class NodeRecord:
     level: str
     text: str = ""
     category: str = ""
-    document_type: str = ""
-    document_subtype: str = ""
     status: str = ""
-    source_id: str = ""
     issuer: str = ""
     publish_date: str = ""
     effective_date: str = ""
     source_url: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
+    order: int = 0
+    article_suffix: int = 0
+    candidate: bool = False
+    alignment_status: str = ""
+    normalized_text: str = ""
+    aliases: list[str] = field(default_factory=list)
+    normalized_values: list[str] = field(default_factory=list)
+    source_members: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -128,34 +87,47 @@ class NodeRecord:
             "name": self.name,
             "level": self.level,
         }
-        if self.text:
-            payload["text"] = self.text
-        if self.category:
-            payload["category"] = self.category
-        if self.document_type:
-            payload["document_type"] = self.document_type
-        if self.document_subtype:
-            payload["document_subtype"] = self.document_subtype
-        if self.status:
-            payload["status"] = self.status
-        if self.source_id:
-            payload["source_id"] = self.source_id
-        if self.issuer:
-            payload["issuer"] = self.issuer
-        if self.publish_date:
-            payload["publish_date"] = self.publish_date
-        if self.effective_date:
-            payload["effective_date"] = self.effective_date
-        if self.source_url:
-            payload["source_url"] = self.source_url
-        payload["metadata"] = self.metadata
+        for field_name in (
+            "text",
+            "category",
+            "status",
+            "issuer",
+            "publish_date",
+            "effective_date",
+            "source_url",
+            "alignment_status",
+            "normalized_text",
+        ):
+            value = getattr(self, field_name)
+            if value not in {"", None}:
+                payload[field_name] = value
+        for field_name in ("order", "article_suffix"):
+            value = int(getattr(self, field_name) or 0)
+            if value > 0:
+                payload[field_name] = value
+        if self.candidate:
+            payload["candidate"] = True
+        if self.aliases:
+            payload["aliases"] = list(self.aliases)
+        if self.normalized_values:
+            payload["normalized_values"] = list(self.normalized_values)
+        if self.source_members:
+            payload["source_members"] = list(self.source_members)
         allowed_fields = set(_allowed_fields_for_type(self.type))
         return {key: value for key, value in payload.items() if key in allowed_fields}
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "NodeRecord":
+        node_type = str(payload.get("type", "") or "")
         field_names = {item.name for item in fields(cls)}
-        filtered = {key: value for key, value in payload.items() if key in field_names}
+        allowed_payload_fields = {"id", "type", "name", "level"}
+        if node_type:
+            allowed_payload_fields |= set(_allowed_fields_for_type(node_type))
+        filtered = {
+            key: value
+            for key, value in payload.items()
+            if key in field_names and key in allowed_payload_fields
+        }
         node = cls(**filtered)
         node.validate()
         return node
@@ -172,23 +144,25 @@ class NodeRecord:
                 f"schema expects {expected_node_type}."
             )
         allowed_fields = _allowed_fields_for_type(self.type)
-        if self.text and "text" not in allowed_fields:
-            raise ValueError(
-                f"Node {self.id} of type {self.type} contains illegal populated field: text"
-            )
         for field_name in (
-            "document_type",
-            "document_subtype",
+            "text",
             "category",
             "status",
-            "source_id",
             "issuer",
             "publish_date",
             "effective_date",
             "source_url",
+            "order",
+            "article_suffix",
+            "candidate",
+            "alignment_status",
+            "normalized_text",
+            "aliases",
+            "normalized_values",
+            "source_members",
         ):
             field_value = getattr(self, field_name)
-            if field_value and field_name not in allowed_fields:
+            if not _is_empty_value(field_value) and field_name not in allowed_fields:
                 raise ValueError(
                     f"Node {self.id} of type {self.type} contains illegal populated field: {field_name}"
                 )
@@ -201,12 +175,39 @@ class EdgeRecord:
     target: str
     type: str
     weight: float = 1.0
-    evidence: list[dict[str, Any]] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    predicted: bool = False
+    canonical: bool = False
+    model: str = ""
+    label: str = ""
+    concept_id: str = ""
+    start_offset: int = -1
+    end_offset: int = -1
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
-        return asdict(self)
+        payload: dict[str, Any] = {
+            "id": self.id,
+            "source": self.source,
+            "target": self.target,
+            "type": self.type,
+        }
+        if self.weight != 1.0:
+            payload["weight"] = self.weight
+        if self.predicted:
+            payload["predicted"] = True
+        if self.canonical:
+            payload["canonical"] = True
+        if self.model:
+            payload["model"] = self.model
+        if self.label:
+            payload["label"] = self.label
+        if self.concept_id:
+            payload["concept_id"] = self.concept_id
+        if self.start_offset >= 0:
+            payload["start_offset"] = self.start_offset
+        if self.end_offset >= 0:
+            payload["end_offset"] = self.end_offset
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "EdgeRecord":
@@ -223,29 +224,20 @@ class EdgeRecord:
 
 @dataclass
 class GraphBundle:
-    bundle_id: str
-    document_id: str
     nodes: list[NodeRecord] = field(default_factory=list)
     edges: list[EdgeRecord] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "bundle_id": self.bundle_id,
-            "document_id": self.document_id,
             "nodes": [node.to_dict() for node in self.nodes],
             "edges": [edge.to_dict() for edge in self.edges],
-            "metadata": self.metadata,
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "GraphBundle":
         return cls(
-            bundle_id=payload["bundle_id"],
-            document_id=payload["document_id"],
             nodes=[NodeRecord.from_dict(node) for node in payload.get("nodes", [])],
             edges=[EdgeRecord.from_dict(edge) for edge in payload.get("edges", [])],
-            metadata=dict(payload.get("metadata", {})),
         )
 
     def validate_edge_references(self) -> None:
@@ -266,7 +258,6 @@ class GraphBundle:
         structural_rules = _structural_edge_rules()
         structural_edge_types = _structural_edge_types()
         allowed_outgoing_edges = _allowed_outgoing_edges()
-
         for edge in self.edges:
             source_node = node_index[edge.source]
             target_node = node_index[edge.target]
@@ -297,39 +288,13 @@ def deduplicate_graph(bundle: GraphBundle) -> GraphBundle:
         if key not in edge_index or edge.weight > edge_index[key].weight:
             edge_index[key] = edge
 
-    deduped = GraphBundle(
-        bundle_id=bundle.bundle_id,
-        document_id=bundle.document_id,
-        nodes=list(node_index.values()),
-        edges=list(edge_index.values()),
-        metadata=dict(bundle.metadata),
-    )
+    deduped = GraphBundle(nodes=list(node_index.values()), edges=list(edge_index.values()))
     deduped.validate_edge_references()
     return deduped
 
-
-def merge_graph_bundles(
-    bundles: list[GraphBundle],
-    *,
-    bundle_id: str,
-    document_id: str = "corpus",
-    metadata: dict[str, Any] | None = None,
-) -> GraphBundle:
-    merged = GraphBundle(
-        bundle_id=bundle_id,
-        document_id=document_id,
-        nodes=[node for bundle in bundles for node in bundle.nodes],
-        edges=[edge for bundle in bundles for edge in bundle.edges],
-        metadata=metadata or {},
-    )
-    return deduplicate_graph(merged)
-
-
-def build_edge_id(source: str, target: str, edge_type: str, suffix: str = "") -> str:
-    base = f"edge:{slugify(edge_type)}:{slugify(source)}:{slugify(target)}"
-    if suffix:
-        return f"{base}:{suffix}"
-    return base
+def build_edge_id(source: str = "", target: str = "", edge_type: str = "", suffix: str = "") -> str:
+    del source, target, edge_type, suffix
+    return f"edge:{uuid4()}"
 
 
 def _allowed_fields_for_type(node_type: str) -> tuple[str, ...]:
@@ -337,3 +302,11 @@ def _allowed_fields_for_type(node_type: str) -> tuple[str, ...]:
     if node_type not in node_allowed_fields:
         raise ValueError(f"Unsupported node type: {node_type}")
     return node_allowed_fields[node_type]
+
+
+def _is_empty_value(value: Any) -> bool:
+    if value in ("", None, 0, False):
+        return True
+    if isinstance(value, list):
+        return len(value) == 0
+    return False

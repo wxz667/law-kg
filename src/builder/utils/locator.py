@@ -21,7 +21,7 @@ class NodeLocator:
 
 _ARTICLE_KEY_RE = re.compile(r"^(?P<article>\d{4})(?:-(?P<suffix>\d{2}))?$")
 _DOCUMENT_ID_RE = re.compile(r"^document:(?P<source>.+)$")
-_TOC_ID_RE = re.compile(r"^(?P<kind>part|chapter|section):(?P<source>.+):(?P<ordinal>\d{2})$")
+_TOC_ID_RE = re.compile(r"^(?P<kind>part|chapter|section):(?P<source>[^:]+):(?P<tail>.+)$")
 _ARTICLE_ID_RE = re.compile(r"^article:(?P<source>.+):(?P<article_key>\d{4}(?:-\d{2})?)$")
 _PARAGRAPH_ID_RE = re.compile(
     r"^paragraph:(?P<source>.+):(?P<article_key>\d{4}(?:-\d{2})?):(?P<paragraph>\d{2})$"
@@ -40,6 +40,21 @@ _SEGMENT_SUB_ITEM_ID_RE = re.compile(
 )
 _SEGMENT_ID_RE = re.compile(r"^segment:(?P<source>.+):(?P<segment>\d{4})$")
 _APPENDIX_ID_RE = re.compile(r"^appendix:(?P<source>.+):(?P<appendix>\d{2})$")
+
+
+def source_id_from_node_id(node_id: str) -> str:
+    if matched := _DOCUMENT_ID_RE.fullmatch(node_id):
+        return matched.group("source")
+    parts = node_id.split(":")
+    if len(parts) < 2:
+        raise ValueError(f"Unsupported node id: {node_id}")
+    return parts[1]
+
+
+def owner_source_id(owner_id: str) -> str:
+    if owner_id.startswith("document:"):
+        return source_id_from_node_id(owner_id)
+    return owner_id
 
 
 def _parse_article_key(article_key: str) -> tuple[int, int | None]:
@@ -145,3 +160,27 @@ def node_id_from_locator(locator: NodeLocator, source_id: str) -> str | None:
     if locator.paragraph_no is not None:
         base = f"{base}:{locator.paragraph_no:02d}"
     return f"{base}:{locator.item_no:02d}:{locator.sub_item_no:02d}"
+
+
+def node_sort_key(node: object) -> tuple[object, ...]:
+    node_id = str(getattr(node, "id", ""))
+    level = str(getattr(node, "level", ""))
+    locator = node_locator_from_node_id(node_id)
+
+    if level in {"part", "chapter", "section", "concept"}:
+        return (0, int(getattr(node, "order", 0) or 0), node_id)
+    if level == "article" and locator is not None:
+        return (1, int(locator.article_no or 0), int(locator.article_suffix or 0), node_id)
+    if level == "paragraph" and locator is not None:
+        return (2, int(locator.paragraph_no or 0), node_id)
+    if level == "item" and locator is not None:
+        return (3, int(locator.item_no or 0), node_id)
+    if level == "sub_item" and locator is not None:
+        return (4, int(locator.sub_item_no or 0), node_id)
+    if level == "segment" and locator is not None:
+        return (5, int(locator.segment_no or 0), node_id)
+    if level == "appendix" and locator is not None:
+        return (6, int(locator.appendix_no or 0), node_id)
+    if level == "document":
+        return (7, node_id)
+    return (99, int(getattr(node, "order", 0) or 0), node_id)
