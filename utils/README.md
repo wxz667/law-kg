@@ -1,19 +1,44 @@
-# Infrastructure
+# utils
 
-This directory contains infrastructure adapters and optional downstream assets.
+## 目录说明
 
-LLM-related infrastructure lives under `utils/llm/`.
-Its responsibility is limited to explicit vendor adaptation:
+`utils/` 为仓库级公共组件目录，承载与具体业务流水线解耦的基础设施适配层和通用外部接口。
 
-- normalize each configured vendor into a shared client interface
-- read provider connection settings from `.env`
-- handle authentication, transport, retries, and provider response parsing
-- avoid any coupling with Tree-KG stages, prompts, or graph contracts
+本目录中的模块不实现知识图谱构建、训练流程或阶段业务规则，仅提供跨模块复用的底层能力。
 
-Provider names should be explicit vendor or platform identifiers such as
-`bigmodel`, `deepseek`, or `openrouter`, not broad compatibility labels.
+## 模块职责
 
-Current provider-specific requirements:
+### `llm/`
 
-- `bigmodel` uses the `zai-sdk` package
-- `deepseek` uses the `openai` package with DeepSeek's OpenAI-compatible API
+`utils/llm/` 提供统一的大语言模型访问接口与供应商适配层，负责以下能力：
+
+- 将不同供应商客户端适配为统一调用接口
+- 读取供应商连接配置与认证信息
+- 处理认证、传输、重试与响应解析
+- 对上层业务屏蔽供应商差异
+
+当前支持的供应商适配包括：
+
+- `bigmodel`
+- `deepseek`
+
+供应商命名使用明确的平台或厂商标识，不使用宽泛兼容层命名。
+
+### `model_assets/`
+
+`utils/model_assets/` 提供模型资产与训练数据资产的统一下载、发布与配置解析能力，负责以下能力：
+
+- 读取项目配置中的模型仓库与数据集仓库信息
+- 下载模型资产与训练数据资产
+- 发布本地模型目录与训练数据目录到远端仓库
+- 为仓库级脚本提供统一的资产管理入口
+
+当前已接入的资产类型包括：
+
+- `interprets_filter`
+
+## 设计约束
+
+- `utils/` 只承载公共组件，不承载阶段业务逻辑
+- 与业务阶段强耦合的实现应放在 `src/` 对应模块下
+- 外部服务适配、资产管理、认证与下载发布等能力应优先放在本目录

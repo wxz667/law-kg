@@ -1,150 +1,147 @@
 # law-kg
 
-`law-kg` 现在采用统一 `src/` 源码目录，并以 `src/builder/` 作为唯一构建主包。
+## 项目简介
 
-## 当前架构
+`law-kg` 是一个面向中文规范性文件的知识图谱构建项目。项目从结构化元数据与原始 `DOCX` 文档中提取文书结构、显式关系、实体与隐式关系特征，并以 JSONL 图产物形式输出，供后续检索、分析和图数据库导入使用。
 
-构建期从 `data/source/metadata/*.json` 与 `data/source/docs/*.docx` 读取输入，不直接写数据库。主流水线按 7 个阶段推进：
+项目采用统一 `src/` 源码目录组织，`src/builder/` 为主构建流水线，`src/interprets_filter/`、`src/ner/`、`src/rgcn/` 为相关训练与推理模块。
+
+## 功能范围
+
+项目当前包含以下功能：
+
+- 规范性文件标准化清洗与逻辑文书切分
+- 文书目录层级、条款层级与正文片段的结构图构建
+- 显式引用候选筛选、目标定位与关系分类
+- 实体抽取、实体对齐与概念节点构建
+- 隐式关系特征生成与推理
+- 图谱产物拆分导出，用于 Neo4j 与 Elasticsearch 等下游系统
+- `interprets_filter` 模型的数据集构建、训练、预测与模型资产管理
+
+## Builder 流水线
+
+主构建流程按以下七个阶段执行：
 
 1. `normalize`
-2. `sturctre`
+2. `structure`
 3. `reference_filter`
 4. `relation_classify`
 5. `entity_extraction`
 6. `entity_alignment`
 7. `implicit_reasoning`
 
-`normalize` 阶段产出逐文档清洗结果与阶段索引；`sturctre` 产出统一 `graph_bundle-*.json`。`reference_filter` 与 `relation_classify` 输出候选工件和关系计划工件，不直接写图；最终导出时再将关系计划物化回图中。结构边当前只保留 `CONTAINS`。
+各阶段职责如下：
 
-模型发布与下载不属于训练流水线本身，统一通过独立的 `scripts/model_asset` 入口处理；`interprets_filter` 训练 CLI 只负责数据集、训练与预测。
+- `normalize`
+  读取 `data/source/metadata/*.json` 与 `data/source/docs/*.docx`，完成逻辑文书切分、正文清洗与标准化索引生成。
+- `structure`
+  基于标准化结果构建文档节点、目录节点、条款节点与结构边。
+- `reference_filter`
+  在文档文本中识别显式引用，生成候选引用与目标节点映射。
+- `relation_classify`
+  对候选引用执行规则修正、模型判别与可选的 LLM 仲裁，输出 `REFERENCES` 与 `INTERPRETS` 边。
+- `entity_extraction`
+  从文本节点中抽取实体与概念候选。
+- `entity_alignment`
+  对概念候选进行归并和对齐，形成统一概念节点。
+- `implicit_reasoning`
+  生成隐式关系推理特征并补充推理边。
 
-注意：第一阶段要求输入是真实的 Office Open XML `.docx` 包。如果文件只是后缀名为 `.docx`、实际内容仍是老 `.doc` 复合文档，builder 会明确报错并要求先转换。第一阶段现在先把一个物理 `.docx` 拆成一个或多个逻辑文书，再分别做正文结构解析。逻辑文书标题优先来自正文显式标题块，而不是引用书名号；通知、公告、请示等壳文默认不进图，批复、答复、复函正文保留。`第一条` 仍然优先按正式条文解析；当正文只有 `一、`、`（一）`、`1.` 这类特殊层级时，builder 会先寻找候补 `article` 锚点，再向上回推候补 `chapter` / `section`，而不是默认把 `一、` 直接当作条文。只有完全未命中模板时才退化为单个 `正文` 节点。
+## 图谱产物
+
+项目图谱产物采用分阶段 JSONL 形式输出，不直接在构建阶段写入数据库。
+
+### 节点
+
+- 文档节点类型：`DocumentNode`
+- 目录节点类型：`TocNode`
+- 条款节点类型：`ProvisionNode`
+- 概念节点类型：`ConceptNode`
+
+### 边
+
+- 结构边：`CONTAINS`
+- 语义边：`REFERENCES`、`INTERPRETS`、`MENTIONS`
+
+### 正式产物形式
+
+图阶段目录内按需输出：
+
+- `nodes.jsonl`
+- `edges.jsonl`
+
+阶段状态与增量构建信息写入：
+
+- `data/manifest/builder/{stage_name}.json`
+
+运行日志写入：
+
+- `logs/builder/{job_id}.json`
 
 ## 目录结构
 
-- `src/builder/`: 七阶段构建流水线
-- `src/interprets_filter/`: 司法解释解释关系筛选数据集、训练与推理模块
-- `src/ner/`: NER 数据集、训练与推理模块
-- `src/rgcn/`: 隐式关系推理数据集、训练与推理模块
-- `src/crawler/`: 采集与原始数据整理模块
-- `configs/schema.json`: 图谱 schema
-- `guideline.md`: 项目实施指南
-- `data/raw/`: 原始 `DOCX + metadata`
-- `data/intermediate/01_normalize/`: 逐文档清洗结果与阶段索引
-- `data/intermediate/02_sturctre/`: 结构图谱 graph bundle
-- `data/intermediate/03_reference_filter/`
-- `data/intermediate/04_relation_classify/`
-- `data/intermediate/05_entity_extraction/`
-- `data/intermediate/06_entity_alignment/`
-- `data/intermediate/07_implicit_reasoning/`
-- `logs/builder/`: builder 运行日志、manifest 与 normalize 报告
-- `data/exports/json/`: 最终 graph bundle 导出
-- `data/exports/import/`: 供 Neo4j / Elasticsearch 导入的 JSONL
-- `data/models/`: 本地模型工件目录
+### 源码目录
 
-## 模型与数据集发布
+- `src/builder/`：主构建流水线
+- `src/interprets_filter/`：解释关系分类数据集、训练与预测模块
+- `src/ner/`：NER 数据集、训练与预测模块
+- `src/rgcn/`：隐式关系推理数据集、训练与预测模块
+- `src/crawler/`：采集与原始数据整理模块
+- `utils/`：仓库级公共组件与外部接口适配层
 
-仓库不再跟踪 `models/interprets_filter/` 下的训练模型与 checkpoint。本地训练产物建议发布到 Hugging Face：
+### 配置与说明
 
-- 模型仓库：保存最终推理所需文件，如 `model.safetensors`、`config.json`、`tokenizer.json`、`tokenizer_config.json`、`label_map.json`、`metrics.json`
-- 数据集仓库：保存 `data/train/interprets_filter/` 下的数据集切分与说明文件
+- `configs/config.json`：项目运行配置
+- `configs/schema.json`：图谱结构 schema
+- `guideline.md`：项目实施规范
 
-在 [configs/config.json](/home/zephyr/law-kg/configs/config.json) 的 `interprets_filter.hub` 中填写：
+### 数据目录
 
-```json
-{
-  "model_repo_id": "your-name/your-interprets-filter-model",
-  "model_revision": "main",
-  "dataset_repo_id": "your-name/your-interprets-filter-dataset",
-  "dataset_revision": "main"
-}
-```
-
-下载模型和数据集：
-
-```bash
-scripts/model_asset --download interprets_filter
-```
-
-也可以只下载模型：
-
-```bash
-scripts/model_asset --download interprets_filter --model
-```
-
-只下载数据集：
-
-```bash
-scripts/model_asset --download interprets_filter --dataset
-```
-
-发布到 Hugging Face 的推荐流程：
-
-```bash
-hf auth login
-scripts/model_asset --publish interprets_filter
-```
-
-也可以只发布模型或数据集：
-
-```bash
-scripts/model_asset --publish interprets_filter --model
-scripts/model_asset --publish interprets_filter --dataset
-```
-
-如果你仍然想保留专用命令，下面这个脚本会复用公共入口：
-
-```bash
-scripts/interprets_filter_download
-```
+- `data/source/docs/`：原始 `DOCX` 文档
+- `data/source/metadata/`：元数据清单
+- `data/intermediate/builder/`：builder 分阶段中间产物
+- `data/manifest/builder/`：builder 阶段状态快照
+- `data/train/interprets_filter/`：`interprets_filter` 训练数据集
+- `data/exports/json/`：最终图谱导出
 
 ## 运行方式
 
-单文件构建：
+### 单文档构建
 
 ```bash
-scripts/build_graph \
+scripts/build \
   --data-root data \
   --source-id 2c909fdd678bf17901678bf5aba10073
 ```
 
-只跑到某一阶段：
+### 指定阶段范围构建
 
 ```bash
-scripts/build_graph \
+scripts/build \
   --data-root data \
   --source-id 2c909fdd678bf17901678bf5aba10073 \
   --start normalize \
-  --end entity_alignment
+  --end relation_classify
 ```
 
-批量构建：
+### 批量构建
 
 ```bash
-scripts/build_batch \
-  --data-root data \
-  --category law
+scripts/build-batch \
+  --data-root data
 ```
 
-将最终图谱拆分为导入文件：
+### 统一 CLI 入口
+
+```bash
+scripts/builder build-batch --data-root data
+```
+
+### 图谱拆分导出
 
 ```bash
 scripts/split_export \
-  --graph data/exports/json/law__中华人民共和国刑法/graph_bundle-0001.json \
-  --output-root data/exports/import/law__中华人民共和国刑法
+  --graph data/exports/json \
+  --output-root data/exports/import
 ```
 
-统一 CLI 入口也可直接使用：
-
-```bash
-scripts/builder build-batch --data-root data --category law
-```
-
-## crawler 到 builder 的数据路径
-
-## 当前实现边界
-
-- `builder` 只负责构图，不负责训练，不负责数据库导入
-- `entity_alignment` 不单独训练模型，直接使用预训练向量召回 + 内部判别逻辑
-- `interprets_filter`、`ner`、`rgcn` 提供独立的数据集构建、训练和推理入口
-- 所有阶段最终以 JSON graph bundle 为准，数据库导入通过拆分脚本完成
