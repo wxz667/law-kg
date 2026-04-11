@@ -71,9 +71,9 @@
       "threshold": 0.5
     },
     "hub": {
-      "model_repo_id": "",
+      "model_repo_id": "Ruiyang-Zh/interprets-filter",
       "model_revision": "main",
-      "dataset_repo_id": "",
+      "dataset_repo_id": "Ruiyang-Zh/interprets-filter",
       "dataset_revision": "main"
     }
   },

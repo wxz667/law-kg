@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from lib.llm.base import ProviderRequestConfig, ProviderResponseError
+from utils.llm.base import ProviderRequestConfig, ProviderResponseError
 
 
 PROMPT = """你是法律知识图谱中的显式关系仲裁模型。

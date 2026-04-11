@@ -14,7 +14,6 @@ from typing import Any
 from .api import InterpretFilterInput
 from .config import DEFAULT_CONFIG_PATH
 from .dataset import build_dataset
-from .hub import build_download_summary, download_assets, resolve_hub_asset_config
 from .predict import predict
 from .train import train
 
@@ -110,20 +109,6 @@ def build_parser() -> argparse.ArgumentParser:
     predict_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to the project config file.")
     predict_parser.add_argument("--model-dir", default="models/interprets_filter", help="Directory for model artifacts.")
 
-    download_parser = subparsers.add_parser("download", help="Download model and dataset artifacts from Hugging Face.")
-    download_parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to the project config file.")
-    download_parser.add_argument("--model-dir", default="models/interprets_filter", help="Directory for model artifacts.")
-    download_parser.add_argument(
-        "--dataset-dir",
-        default="data/train/interprets_filter",
-        help="Directory for interprets_filter dataset artifacts.",
-    )
-    download_parser.add_argument("--model-repo-id", help="Override the model repo_id instead of reading config.")
-    download_parser.add_argument("--dataset-repo-id", help="Override the dataset repo_id instead of reading config.")
-    download_parser.add_argument("--model-revision", help="Optional model revision override.")
-    download_parser.add_argument("--dataset-revision", help="Optional dataset revision override.")
-    download_parser.add_argument("--skip-model", action="store_true", help="Skip model download.")
-    download_parser.add_argument("--skip-dataset", action="store_true", help="Skip dataset download.")
     return parser
 
 
@@ -134,21 +119,6 @@ def main() -> int:
     if args.command == "predict":
         results = predict([InterpretFilterInput(text=args.text)], model_dir=Path(args.model_dir), config_path=Path(args.config))
         print(json.dumps([result.__dict__ for result in results], ensure_ascii=False))
-        return 0
-
-    if args.command == "download":
-        hub = resolve_hub_asset_config(Path(args.config))
-        downloaded = download_assets(
-            model_repo_id=str(args.model_repo_id or hub.model_repo_id).strip(),
-            dataset_repo_id=str(args.dataset_repo_id or hub.dataset_repo_id).strip(),
-            model_dir=Path(args.model_dir),
-            dataset_dir=Path(args.dataset_dir),
-            model_revision=str(args.model_revision or hub.model_revision).strip() or "main",
-            dataset_revision=str(args.dataset_revision or hub.dataset_revision).strip() or "main",
-            include_model=not bool(args.skip_model),
-            include_dataset=not bool(args.skip_dataset),
-        )
-        print(json.dumps(build_download_summary(downloaded), ensure_ascii=False, indent=2))
         return 0
 
     reporter = StageReporter()

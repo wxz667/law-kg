@@ -5,8 +5,8 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from lib.llm.base import ProviderRequestConfig, ProviderResponseError
-from lib.llm.factory import build_provider_client
+from utils.llm.base import ProviderRequestConfig, ProviderResponseError
+from utils.llm.factory import build_provider_client
 
 from .config import canonical_label, resolve_distill_runtime_config
 

@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from interprets_filter.api import InterpretPrediction, predict_interprets
-from lib.llm.base import ProviderRequestConfig
-from lib.llm.factory import build_provider_client
+from utils.llm.base import ProviderRequestConfig
+from utils.llm.factory import build_provider_client
 from ner.api import EntityPrediction, predict_entities
 from rgcn.api import ImplicitRelationPrediction, predict_implicit_relations
 

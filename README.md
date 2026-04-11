@@ -16,6 +16,8 @@
 
 `normalize` 阶段产出逐文档清洗结果与阶段索引；`sturctre` 产出统一 `graph_bundle-*.json`。`reference_filter` 与 `relation_classify` 输出候选工件和关系计划工件，不直接写图；最终导出时再将关系计划物化回图中。结构边当前只保留 `CONTAINS`。
 
+模型发布与下载不属于训练流水线本身，统一通过独立的 `scripts/model_asset` 入口处理；`interprets_filter` 训练 CLI 只负责数据集、训练与预测。
+
 注意：第一阶段要求输入是真实的 Office Open XML `.docx` 包。如果文件只是后缀名为 `.docx`、实际内容仍是老 `.doc` 复合文档，builder 会明确报错并要求先转换。第一阶段现在先把一个物理 `.docx` 拆成一个或多个逻辑文书，再分别做正文结构解析。逻辑文书标题优先来自正文显式标题块，而不是引用书名号；通知、公告、请示等壳文默认不进图，批复、答复、复函正文保留。`第一条` 仍然优先按正式条文解析；当正文只有 `一、`、`（一）`、`1.` 这类特殊层级时，builder 会先寻找候补 `article` 锚点，再向上回推候补 `chapter` / `section`，而不是默认把 `一、` 直接当作条文。只有完全未命中模板时才退化为单个 `正文` 节点。
 
 ## 目录结构
@@ -61,31 +63,39 @@
 下载模型和数据集：
 
 ```bash
-scripts/interprets_filter_download
+scripts/model_asset --download interprets_filter
 ```
 
 也可以只下载模型：
 
 ```bash
-scripts/interprets_filter_download --skip-dataset
+scripts/model_asset --download interprets_filter --model
+```
+
+只下载数据集：
+
+```bash
+scripts/model_asset --download interprets_filter --dataset
 ```
 
 发布到 Hugging Face 的推荐流程：
 
 ```bash
 hf auth login
-hf repo create your-name/your-interprets-filter-model
-hf repo create your-name/your-interprets-filter-dataset --repo-type dataset
+scripts/model_asset --publish interprets_filter
+```
 
-hf upload your-name/your-interprets-filter-model models/interprets_filter . \
-  --exclude "checkpoints/**" \
-  --exclude "optimizer.pt" \
-  --exclude "scheduler.pt" \
-  --exclude "rng_state.pth" \
-  --exclude "trainer_state.json" \
-  --exclude "training_args.bin"
+也可以只发布模型或数据集：
 
-hf upload your-name/your-interprets-filter-dataset data/train/interprets_filter . --repo-type dataset
+```bash
+scripts/model_asset --publish interprets_filter --model
+scripts/model_asset --publish interprets_filter --dataset
+```
+
+如果你仍然想保留专用命令，下面这个脚本会复用公共入口：
+
+```bash
+scripts/interprets_filter_download
 ```
 
 ## 运行方式
