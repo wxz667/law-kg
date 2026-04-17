@@ -5,7 +5,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from utils.llm.base import ProviderRequestConfig, ProviderResponseError
+from utils.llm.base import ProviderRequestConfig, ProviderResponseError, build_provider_request_config
 from utils.llm.factory import build_provider_client
 
 from .config import canonical_label, resolve_distill_runtime_config
@@ -116,10 +116,13 @@ def has_source_term_defined_by_target(marked_text: str) -> bool:
 
 def build_request_config(distill_config: dict[str, Any]) -> tuple[ProviderRequestConfig, int, int, int]:
     runtime = resolve_distill_runtime_config(distill_config)
-    request_config = ProviderRequestConfig(
+    request_config = build_provider_request_config(
         provider=runtime.provider,
         model=runtime.model,
-        params={**runtime.params, "timeout_seconds": runtime.request_timeout_seconds, "max_retries": runtime.max_retries},
+        params=runtime.params,
+        timeout_seconds=runtime.request_timeout_seconds,
+        max_retries=runtime.max_retries,
+        rate_limit=runtime.rate_limit,
     )
     return request_config, runtime.max_retries, runtime.batch_size, runtime.concurrent_requests
 

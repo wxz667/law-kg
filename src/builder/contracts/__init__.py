@@ -1,6 +1,12 @@
 from .artifacts import (
+    AlignPairRecord,
     AstNodeRecord,
+    ClassifyPendingRecord,
+    ConceptVectorRecord,
     DocumentUnitRecord,
+    EmbeddedConceptRecord,
+    ExtractConceptRecord,
+    ExtractInputRecord,
     LogicalDocumentRecord,
     LlmJudgeDetailRecord,
     NormalizedDocumentRecord,
@@ -8,7 +14,7 @@ from .artifacts import (
     NormalizeStageIndex,
     PhysicalSourceRecord,
     ReferenceCandidateRecord,
-    RelationClassifyRecord,
+    ClassifyRecord,
     SourceDocumentRecord,
 )
 from .graph import (
@@ -18,12 +24,18 @@ from .graph import (
     build_edge_id,
     deduplicate_graph,
 )
-from .manifest import JobLogRecord, StageRecord, StageStateManifest
+from .manifest import JobLogRecord, StageRecord, StageStateManifest, SubstageStateManifest
 
 __all__ = [
+    "AlignPairRecord",
     "AstNodeRecord",
+    "ClassifyPendingRecord",
+    "ConceptVectorRecord",
     "DocumentUnitRecord",
+    "EmbeddedConceptRecord",
     "EdgeRecord",
+    "ExtractConceptRecord",
+    "ExtractInputRecord",
     "GraphBundle",
     "JobLogRecord",
     "LlmJudgeDetailRecord",
@@ -34,10 +46,11 @@ __all__ = [
     "NodeRecord",
     "PhysicalSourceRecord",
     "ReferenceCandidateRecord",
-    "RelationClassifyRecord",
+    "ClassifyRecord",
     "SourceDocumentRecord",
     "StageRecord",
     "StageStateManifest",
+    "SubstageStateManifest",
     "build_edge_id",
     "deduplicate_graph",
 ]

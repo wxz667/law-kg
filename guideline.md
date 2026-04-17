@@ -1,4 +1,4 @@
-# 项目指南：六阶段法律知识图谱构建流水线
+# 项目指南：七阶段法律知识图谱构建流水线
 
 ## 当前目标
 
@@ -7,8 +7,9 @@
 当前构建期不接数据库。正式产物统一以 JSON 为准：
 
 - `normalize` 先输出逐文档清洗结果
-- `sturctre` 起输出标准 `graph_bundle-*.json`
-- 后续阶段只在图上做增量处理
+- `structure` 与关系阶段输出图或关系中间产物
+- `extract` 输出概念抽取中间产物，不直接改图
+- `align` 起再把概念结果逐步落回图
 
 ## 目录约定
 
@@ -17,7 +18,6 @@
 - crawler 采集模块固定为 `src/crawler/`
 - 可训练模型模块固定为：
   - `src/interprets_filter/`
-  - `src/ner/`
   - `src/rgcn/`
 - 图谱 schema 固定为 `configs/schema.json`
 - builder 输入固定来自：
@@ -28,7 +28,7 @@
 - 最终图谱固定落在 `data/exports/json/`
 - 导入拆分文件固定落在 `data/exports/import/`
 
-## 六阶段职责
+## 七阶段职责
 
 ### 阶段一：`normalize`
 
@@ -50,8 +50,8 @@
 
 正式产物：
 
-- `data/intermediate/01_normalize/documents/{source_id}.json`
-- `data/intermediate/01_normalize/normalize_index.json`
+- `data/intermediate/builder/01_normalize/documents/{source_id}.json`
+- `data/intermediate/builder/01_normalize/normalize_index.json`
 
 其中单文档 JSON 最少包含：
 
@@ -61,7 +61,7 @@
 - `appendix_lines`
 - metadata 中除 `source_format` 外的其余字段
 
-### 阶段二：`sturctre`
+### 阶段二：`structure`
 
 职责：
 
@@ -89,9 +89,10 @@
 
 正式产物：
 
-- `data/intermediate/02_sturctre/graph_bundle-0001.json`
+- `data/intermediate/builder/02_structure/nodes.jsonl`
+- `data/intermediate/builder/02_structure/edges.jsonl`
 
-### 阶段三：`reference_filter`
+### 阶段三：`detect`
 
 职责：
 
@@ -102,13 +103,13 @@
 
 正式产物：
 
-- `data/intermediate/03_reference_filter/candidates.jsonl`
+- `data/intermediate/builder/03_detect/candidates.jsonl`
 
-### 阶段四：`relation_classify`
+### 阶段四：`classify`
 
 职责：
 
-- 对 `reference_filter` 候选做关系判别
+- 对 `detect` 候选做关系判别
 - 非司法解释来源一律输出 `REFERENCES`
 - 司法解释来源走 `interprets_filter` 阈值判别与可选 LLM 仲裁
 - 输出关系计划工件，最终导出时再统一物化为图边
@@ -120,27 +121,64 @@
 
 正式产物：
 
-- `data/intermediate/04_relation_classify/relation_plans.jsonl`
+- `data/intermediate/builder/04_classify/edges.jsonl`
+- `data/intermediate/builder/04_classify/results.jsonl`
+- `data/intermediate/builder/04_classify/llm_judgments.jsonl`
 
-### 阶段五：`entity_extraction`
+### 阶段五：`extract`
 
 职责：
 
-- 调用 `ner` 模块抽取实体
-- 为实体 mention 生成概念候选节点
-- 补充 `MENTIONS` 边
+- 消费 `classify` 后的图快照，但本阶段不改图
+- 以 `aggregate` 和 `extract` 两个子阶段执行
+- 以 `article` 为主粒度构建输入集，`paragraph`、`item`、`sub_item` 只参与聚合
+- 无 `article` 时退化为 `segment`
+- 若全文只有一个名为 `正文` 的 `segment`，挂载节点改为 `document`
+- 聚合文本时：
+  - `article.text` 直接作为首段正文
+  - `paragraph` 以自然段拼接
+  - `item` 使用 `（一）`、`（二）` 等标识逐项换行
+  - `sub_item` 使用目级规范标识逐项换行
+- 调用 LLM 抽取能代表法条核心特征的概念关键词
+- 每个结果固定输出 `concept + evidence`
+- 结果仅作为后续对齐与去重输入，不在本阶段落图
+- `aggregate` 先持久化 `inputs.jsonl`
+- `extract` 再基于持久化后的 `inputs.jsonl` 执行概念抽取并写入 `concepts.jsonl`
+- `manifest.processed_source_ids` 仅记录已完成完整 `extract` 的文档，不把仅完成聚合的文档算作完成
+- 概念质量优先依赖提示词优化，不依赖固定语义规则过滤来修补 LLM 输出
 
 正式产物：
 
-- `data/intermediate/05_entity_extraction/graph_bundle-0001.json`
+- `data/intermediate/builder/05_extract/inputs.jsonl`
+- `data/intermediate/builder/05_extract/concepts.jsonl`
 
-### 阶段六：`entity_alignment`
+其中：
+
+- `inputs.jsonl` 每行固定为：
+  - `id`
+  - `content`
+- `concepts.jsonl` 每行固定为：
+  - `id`
+  - `source_id`
+  - `concept`
+  - `evidence`
+
+补充约束：
+
+- `inputs.id` 直接等于挂载节点 id
+- 每个挂载节点最多只生成一条输入记录
+- `concepts.source_id` 的值固定为挂载节点 id，不是文档 `source_id`
+- 模型提供方、模型名、参数和错误详情只写日志，不进入结果文件
+- 若持久化输入与当前图快照一致，应优先复用已有 `inputs.jsonl`，避免重复聚合和重复写入
+
+### 阶段六：`align`
 
 职责：
 
+- 后续消费 `extract` 的概念中间产物
 - 使用向量召回与内部判别逻辑对概念候选做对齐
 - 将候选概念合并为规范化 `ConceptNode`
-- 重写 mention 边，使图中仅保留对齐后的概念节点
+- 统一入图并补充概念边
 
 注意：
 
@@ -149,9 +187,10 @@
 
 正式产物：
 
-- `data/intermediate/05_entity_alignment/graph_bundle-0001.json`
+- `data/intermediate/builder/06_align/nodes.jsonl`
+- `data/intermediate/builder/06_align/edges.jsonl`
 
-### 阶段七：`implicit_reasoning`
+### 阶段七：`infer`
 
 职责：
 
@@ -162,8 +201,9 @@
 
 正式产物：
 
-- `data/intermediate/06_implicit_reasoning/graph_bundle-0001.json`
-- `data/exports/json/graph_bundle-0001.json`
+- `data/intermediate/builder/07_infer/edges.jsonl`
+- `data/exports/json/nodes.jsonl`
+- `data/exports/json/edges.jsonl`
 
 ## 图谱范围
 
@@ -211,7 +251,6 @@
 只有需要训练的小模型拆成独立同级模块：
 
 - `interprets_filter`
-- `ner`
 - `rgcn`
 
 每个模块都必须包含：
@@ -227,25 +266,30 @@
 
 正式产物以 JSON 为准：
 
-- normalize 文档产物写入 `data/intermediate/01_normalize/`
-- 阶段图写入 `data/intermediate/`
+- normalize 文档产物写入 `data/intermediate/builder/01_normalize/`
+- 阶段图与中间产物写入 `data/intermediate/builder/`
 - 最终图写入 `data/exports/json/`
 
 阶段目录中的文件形式固定为：
 
 - `01_normalize/documents/{source_id}.json`
 - `01_normalize/normalize_index.json`
-- `02_sturctre/graph_bundle-0001.json`
-- `03_reference_filter/candidates.jsonl`
-- `04_relation_classify/relation_plans.jsonl`
-- `05_entity_extraction/graph_bundle-0001.json`
-- `06_entity_alignment/graph_bundle-0001.json`
-- `07_implicit_reasoning/graph_bundle-0001.json`
+- `02_structure/nodes.jsonl`
+- `02_structure/edges.jsonl`
+- `03_detect/candidates.jsonl`
+- `04_classify/edges.jsonl`
+- `04_classify/results.jsonl`
+- `04_classify/llm_judgments.jsonl`
+- `05_extract/inputs.jsonl`
+- `05_extract/concepts.jsonl`
+- `06_align/nodes.jsonl`
+- `06_align/edges.jsonl`
+- `07_infer/edges.jsonl`
 
 后续导入流程由拆分脚本负责：
 
-- 从最终 graph bundle 中拆出 Neo4j 节点、边 JSONL
-- 从最终 graph bundle 中拆出 Elasticsearch 文档 JSONL
+- 从最终图的 `nodes.jsonl` 和 `edges.jsonl` 拆出 Neo4j 节点、边 JSONL
+- 从最终图节点中拆出 Elasticsearch 文档 JSONL
 
 ## CLI 与脚本约定
 
@@ -271,20 +315,20 @@ CLI 语义固定为：
 阶段名固定为：
 
 - `normalize`
-- `sturctre`
-- `reference_filter`
-- `relation_classify`
-- `entity_extraction`
-- `entity_alignment`
-- `implicit_reasoning`
+- `structure`
+- `detect`
+- `classify`
+- `extract`
+- `align`
+- `infer`
 
 辅助脚本固定为：
 
 - `scripts/builder`
 - `scripts/crawl_fetch`
 - `scripts/crawl_materialize_docx`
-- `scripts/build_graph`
-- `scripts/build_batch`
+- `scripts/build`
+- `scripts/build-batch`
 - `scripts/split_export`
 
 ## 原始数据契约

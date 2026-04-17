@@ -6,6 +6,7 @@ import sys
 import threading
 from pathlib import Path
 
+from .io import read_stage_edges, read_stage_nodes, write_jsonl
 from .pipeline.orchestrator import (
     STAGE_SEQUENCE,
     build_batch_knowledge_graph,
@@ -13,7 +14,6 @@ from .pipeline.orchestrator import (
     resolve_source_id,
 )
 from .pipeline.progress import StageBarDisplay
-from .io import read_stage_edges, read_stage_nodes, write_jsonl
 
 
 def add_stage_arguments(parser: argparse.ArgumentParser) -> None:
@@ -32,153 +32,152 @@ def add_stage_arguments(parser: argparse.ArgumentParser) -> None:
         default=STAGE_SEQUENCE[-1],
         help="The last processing stage to execute.",
     )
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--rebuild",
         action="store_true",
-        help="Rebuild selected stages for the matched sources instead of reusing existing artifacts.",
+        help="Rebuild selected stages for the matched sources after confirmation.",
     )
-    parser.add_argument(
+    mode_group.add_argument(
         "--incremental",
         action="store_true",
-        help="Deprecated alias of the default merge-and-skip behavior.",
+        help="Explicitly use the default incremental merge-and-skip behavior.",
     )
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Build legal knowledge graph bundle artifacts."
+    parser = argparse.ArgumentParser(description="Build legal knowledge graph bundle artifacts.")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="build",
+        choices=("build",),
+        help="Builder command. The default and only supported command is 'build'.",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    build_parser = subparsers.add_parser("build", help="Build artifacts for a single metadata source_id.")
-    build_parser.add_argument(
+    parser.add_argument(
         "--data-root",
         default="data",
         help="Path to the project data directory. Builder expects metadata under <data-root>/source/metadata.",
     )
-    build_parser.add_argument(
+    scope_group = parser.add_mutually_exclusive_group(required=True)
+    scope_group.add_argument(
         "--source-id",
-        dest="source_id",
-        required=True,
-        help="Metadata source_id to build.",
+        dest="source_ids",
+        nargs="+",
+        help="One or more metadata source_id values to build.",
     )
-    add_stage_arguments(build_parser)
-
-    batch_parser = subparsers.add_parser(
-        "build-batch",
-        help="Build artifacts for metadata-discovered source documents.",
-    )
-    batch_parser.add_argument(
-        "--data-root",
-        default="data",
-        help="Path to the project data directory. Metadata lists are discovered under <data-root>/source/metadata.",
-    )
-    batch_parser.add_argument(
+    scope_group.add_argument(
         "--category",
         nargs="+",
-        help="Optional metadata category filters, such as '法律' '司法解释'.",
+        help="Build all metadata sources whose category matches any of these values.",
     )
-    batch_parser.add_argument(
-        "--glob",
-        default="*.docx",
-        help="Deprecated compatibility flag; metadata-driven discovery ignores this value.",
+    scope_group.add_argument(
+        "--all",
+        action="store_true",
+        help="Build all discovered metadata sources.",
     )
-    add_stage_arguments(batch_parser)
-
-    split_parser = subparsers.add_parser(
-        "split-export",
-        help="Split final stage JSONL artifacts into Neo4j and Elasticsearch import files.",
-    )
-    split_parser.add_argument("--graph", required=True, help="Path to a final graph export directory or stage directory.")
-    split_parser.add_argument(
-        "--output-root",
-        required=True,
-        help="Directory for generated neo4j/es import JSONL files.",
-    )
-
+    add_stage_arguments(parser)
     return parser
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    data_root = Path(args.data_root)
 
-    if args.command == "build":
-        data_root = Path(args.data_root)
-        source_id = resolve_source_id(args.source_id, data_root)
-        display = StageBarDisplay()
-        display.announce_discovery(1)
-        cancel_event = threading.Event()
-        previous_handler = install_interrupt_handler(cancel_event)
-        try:
-            result = build_knowledge_graph(
-                source_id=source_id,
-                data_root=data_root,
-                start_stage=args.start_stage,
-                through_stage=args.through_stage,
-                force_rebuild=args.rebuild,
-                incremental=args.incremental,
-                report_progress=False,
-                stage_progress_callback=display.handle,
-                stage_summary_callback=display.stage_summary,
-                finalizing_callback=display.finalizing_hint,
-                cancel_event=cancel_event,
-            )
-        except KeyboardInterrupt:
-            print("interrupted", file=sys.stderr)
-            return 130
-        except Exception as exc:
-            print(f"error: {source_id} ({exc.__class__.__name__}): {exc}", file=sys.stderr)
-            return 1
-        finally:
-            signal.signal(signal.SIGINT, previous_handler)
-            display.close()
-        display.print_final_summary(result)
-        return 0
+    if args.command != "build":
+        parser.error(f"Unsupported command: {args.command}")
+        return 1
 
-    if args.command == "build-batch":
-        data_root = Path(args.data_root)
-        display = StageBarDisplay()
-        cancel_event = threading.Event()
-        previous_handler = install_interrupt_handler(cancel_event)
+    if args.rebuild and not confirm_rebuild(args):
+        print("cancelled", file=sys.stderr)
+        return 1
 
-        def handle_progress(stage_name: str, current: int, total: int) -> None:
-            display.handle(stage_name, current, total)
+    display = StageBarDisplay()
+    cancel_event = threading.Event()
+    previous_handler = install_interrupt_handler(cancel_event)
+    try:
+        result = run_build_command(args, data_root, display, cancel_event)
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
+    except Exception as exc:
+        print(f"error: {exc.__class__.__name__}: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
+        display.close()
+    display.print_final_summary(result)
+    return 0 if result.get("status") == "completed" else 1
 
-        try:
-            result = build_batch_knowledge_graph(
-                data_root=data_root,
-                pattern=args.glob,
-                category=args.category,
-                start_stage=args.start_stage,
-                through_stage=args.through_stage,
-                force_rebuild=args.rebuild,
-                incremental=args.incremental,
-                report_progress=False,
-                discovery_callback=display.announce_discovery,
-                progress_callback=handle_progress,
-                stage_summary_callback=display.stage_summary,
-                finalizing_callback=display.finalizing_hint,
-                cancel_event=cancel_event,
-            )
-        except KeyboardInterrupt:
-            print("interrupted", file=sys.stderr)
-            return 130
-        finally:
-            signal.signal(signal.SIGINT, previous_handler)
-            display.close()
-        display.print_final_summary(result)
-        return 0 if result["status"] == "completed" else 1
 
-    if args.command == "split-export":
-        split_graph_export(Path(args.graph), Path(args.output_root))
-        print("status: completed")
-        print(f"graph: {args.graph}")
-        print(f"output: {args.output_root}")
-        return 0
+def run_build_command(
+    args: argparse.Namespace,
+    data_root: Path,
+    display: StageBarDisplay,
+    cancel_event: threading.Event,
+) -> dict[str, object]:
+    if args.source_ids:
+        resolved_source_ids = [resolve_source_id(value, data_root) for value in args.source_ids]
+        resolved_source_ids = list(dict.fromkeys(resolved_source_ids))
+        display.announce_discovery(len(resolved_source_ids))
+        return build_knowledge_graph(
+            source_id=resolved_source_ids,
+            data_root=data_root,
+            start_stage=args.start_stage,
+            through_stage=args.through_stage,
+            force_rebuild=args.rebuild,
+            incremental=args.incremental,
+            report_progress=False,
+            stage_progress_callback=display.handle,
+            stage_summary_callback=display.stage_summary,
+            finalizing_callback=display.finalizing_hint,
+            cancel_event=cancel_event,
+        )
 
-    parser.error(f"Unsupported command: {args.command}")
-    return 1
+    def handle_progress(stage_name: str, current: int, total: int) -> None:
+        display.handle(stage_name, current, total)
+
+    category = list(args.category) if args.category else None
+    return build_batch_knowledge_graph(
+        data_root=data_root,
+        category=category,
+        start_stage=args.start_stage,
+        through_stage=args.through_stage,
+        force_rebuild=args.rebuild,
+        incremental=args.incremental,
+        report_progress=False,
+        discovery_callback=display.announce_discovery,
+        progress_callback=handle_progress,
+        stage_summary_callback=display.stage_summary,
+        finalizing_callback=display.finalizing_hint,
+        cancel_event=cancel_event,
+    )
+
+
+def confirm_rebuild(args: argparse.Namespace) -> bool:
+    target = describe_build_scope(args)
+    start_stage = args.start_stage or STAGE_SEQUENCE[0]
+    through_stage = args.through_stage
+    prompt = (
+        "Rebuild requested.\n"
+        f"This will delete existing builder artifacts for the selected target within stages {start_stage} -> {through_stage}.\n"
+        f"Target: {target}\n"
+        "Continue? Type 'yes' to proceed [yes/No]: "
+    )
+    try:
+        answer = input(prompt)
+    except EOFError:
+        return False
+    return answer.strip() == "yes"
+
+
+def describe_build_scope(args: argparse.Namespace) -> str:
+    if args.source_ids:
+        return f"source-id(s): {', '.join(str(value) for value in args.source_ids)}"
+    if args.category:
+        return f"category: {', '.join(str(value) for value in args.category)}"
+    return "all sources"
 
 
 def split_graph_export(graph_path: Path, output_root: Path) -> None:

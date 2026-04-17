@@ -1,4 +1,114 @@
 {
+  "builder": {
+    "normalize": {
+      "checkpoint_every": 100
+    },
+    "structure": {
+      "checkpoint_every": 100
+    },
+    "detect": {
+      "document_workers": 0,
+      "checkpoint_every": 400,
+      "profiling": {
+        "enabled": true
+      }
+    },
+    "classify": {
+      "checkpoint_every": 400,
+      "interprets_filter_policy": {
+        "high_confidence_true_threshold": 0.8,
+        "low_confidence_false_threshold": 0.35,
+        "use_llm_for_uncertain": true,
+        "prediction_batch_size": 128
+      },
+      "llm_conflict": {
+        "provider": "bigmodel",
+        "model": "glm-4.7-flash",
+        "batch_size": 4,
+        "concurrent_requests": 4,
+        "request_timeout_seconds": 90,
+        "max_retries": 2,
+        "rate_limit": {
+          "rpm": 0,
+          "tpm": 0,
+          "retry_count": 3,
+          "backoff_seconds": 5
+        },
+        "params": {
+          "temperature": 0.0,
+          "max_tokens": 512
+        }
+      }
+    },
+    "extract": {
+      "checkpoint_every": 10,
+      "llm_extract": {
+        "provider": "bigmodel",
+        "model": "glm-4.7", 
+        "batch_size": 2,
+        "concurrent_requests": 10,
+        "request_timeout_seconds": 90,
+        "max_retries": 2,
+        "rate_limit": {
+          "rpm": 0,
+          "tpm": 0,
+          "retry_count": 3,
+          "backoff_seconds": 5
+        },
+        "params": {
+          "temperature": 0.1,
+          "max_tokens": 512
+        }
+      }
+    },
+    "embed": {
+      "checkpoint_every": 200,
+      "embedding": {
+        "provider": "siliconflow",
+        "model": "BAAI/bge-m3",
+        "batch_size": 64,
+        "request_timeout_seconds": 90,
+        "max_retries": 2,
+        "rate_limit": {
+          "rpm": 0,
+          "tpm": 0,
+          "retry_count": 3,
+          "backoff_seconds": 5
+        },
+        "params": {}
+      }
+    },
+    "align": {
+      "pair": {
+        "checkpoint_every": 100,
+        "top_k": 20,
+        "related_threshold": 0.85,
+        "equivalent_threshold": 0.96
+      },
+      "classify": {
+        "provider": "bigmodel",
+        "model": "glm-4.7-flash",
+        "checkpoint_every": 100,
+        "batch_size": 25,
+        "concurrent_requests": 4,
+        "request_timeout_seconds": 90,
+        "max_retries": 2,
+        "rate_limit": {
+          "rpm": 0,
+          "tpm": 0,
+          "retry_count": 3,
+          "backoff_seconds": 5
+        },
+        "params": {
+          "temperature": 0.0,
+          "max_tokens": 512
+        }
+      },
+      "resolve": {
+        "checkpoint_every": 200
+      }
+    }
+  },
   "interprets_filter": {
     "dataset": {
       "max_samples": 1500,
@@ -24,12 +134,18 @@
       "review_sample_size": 20
     },
     "distill": {
-      "provider": "deepseek",
-      "model": "deepseek-chat",
+      "provider": "bigmodel",
+      "model": "glm-4.7",
       "concurrent_requests": 4,
       "batch_size": 4,
       "request_timeout_seconds": 90,
       "max_retries": 2,
+      "rate_limit": {
+        "rpm": 0,
+        "tpm": 0,
+        "retry_count": 3,
+        "backoff_seconds": 5
+      },
       "params": {
         "temperature": 0.0,
         "max_tokens": 512
@@ -75,42 +191,6 @@
       "model_revision": "main",
       "dataset_repo_id": "Ruiyang-Zh/interprets-filter",
       "dataset_revision": "main"
-    }
-  },
-  "builder": {
-    "normalize": {
-      "checkpoint_every": 100
-    },
-    "structure": {
-      "checkpoint_every": 100
-    },
-    "reference_filter": {
-      "document_workers": 0,
-      "checkpoint_every": 400,
-      "profiling": {
-        "enabled": true
-      }
-    },
-    "relation_classify": {
-      "checkpoint_every": 400,
-      "interprets_filter_policy": {
-        "high_confidence_true_threshold": 0.8,
-        "low_confidence_false_threshold": 0.35,
-        "use_llm_for_uncertain": true,
-        "prediction_batch_size": 128
-      },
-      "llm_conflict": {
-        "provider": "deepseek",
-        "model": "deepseek-chat",
-        "batch_size": 4,
-        "concurrent_requests": 4,
-        "request_timeout_seconds": 90,
-        "max_retries": 2,
-        "params": {
-          "temperature": 0.0,
-          "max_tokens": 512
-        }
-      }
     }
   }
 }

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from utils.llm.base import validate_provider_api_params
+
 
 LABELS = ("false", "true")
 DEFAULT_CONFIG_PATH = Path("configs/config.json")
@@ -28,6 +30,7 @@ class DistillRuntimeConfig:
     request_timeout_seconds: int
     max_retries: int
     params: dict[str, Any]
+    rate_limit: dict[str, Any]
 
 
 def load_interprets_filter_config(config_path: Path | None = None) -> InterpretsFilterConfig:
@@ -75,9 +78,7 @@ def resolve_distill_runtime_config(distill: dict[str, Any]) -> DistillRuntimeCon
     concurrent_requests = max(int(distill.get("concurrent_requests", 1)), 1)
     request_timeout_seconds = max(int(distill.get("request_timeout_seconds", 60)), 1)
     max_retries = max(int(distill.get("max_retries", 2)), 1)
-    params = dict(distill.get("params", {}))
-    params.pop("timeout_seconds", None)
-    params.pop("max_retries", None)
+    params = validate_provider_api_params(distill.get("params", {}))
     params.setdefault("temperature", 0.0)
     params.setdefault("max_tokens", 512)
     max_tokens = max(int(params.get("max_tokens", 512)), 1)
@@ -95,4 +96,5 @@ def resolve_distill_runtime_config(distill: dict[str, Any]) -> DistillRuntimeCon
         request_timeout_seconds=request_timeout_seconds,
         max_retries=max_retries,
         params=params,
+        rate_limit=dict(distill.get("rate_limit", {})) if isinstance(distill.get("rate_limit", {}), dict) else {},
     )

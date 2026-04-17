@@ -5,14 +5,20 @@ from pathlib import Path
 from typing import Any
 
 from ..contracts import (
+    AlignPairRecord,
+    ClassifyPendingRecord,
+    ConceptVectorRecord,
     EdgeRecord,
+    EmbeddedConceptRecord,
+    ExtractConceptRecord,
+    ExtractInputRecord,
     JobLogRecord,
     LlmJudgeDetailRecord,
     NodeRecord,
     NormalizeStageIndex,
     NormalizedDocumentRecord,
     ReferenceCandidateRecord,
-    RelationClassifyRecord,
+    ClassifyRecord,
     SourceDocumentRecord,
     StageStateManifest,
 )
@@ -112,12 +118,60 @@ def read_reference_candidates(path: Path) -> list[ReferenceCandidateRecord]:
     return [ReferenceCandidateRecord.from_dict(row) for row in read_jsonl(path)]
 
 
-def write_relation_plans(path: Path, rows: list[RelationClassifyRecord]) -> None:
+def write_classify_results(path: Path, rows: list[ClassifyRecord]) -> None:
     write_jsonl(path, [row.to_dict() for row in rows])
 
 
-def read_relation_plans(path: Path) -> list[RelationClassifyRecord]:
-    return [RelationClassifyRecord.from_dict(row) for row in read_jsonl(path)]
+def read_classify_results(path: Path) -> list[ClassifyRecord]:
+    return [ClassifyRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def write_classify_pending(path: Path, rows: list[ClassifyPendingRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_classify_pending(path: Path) -> list[ClassifyPendingRecord]:
+    return [ClassifyPendingRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def write_extract_inputs(path: Path, rows: list[ExtractInputRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_extract_inputs(path: Path) -> list[ExtractInputRecord]:
+    return [ExtractInputRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def write_extract_concepts(path: Path, rows: list[ExtractConceptRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_extract_concepts(path: Path) -> list[ExtractConceptRecord]:
+    return [ExtractConceptRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def write_embedded_concepts(path: Path, rows: list[EmbeddedConceptRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_embedded_concepts(path: Path) -> list[EmbeddedConceptRecord]:
+    return [EmbeddedConceptRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def write_concept_vectors(path: Path, rows: list[ConceptVectorRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_concept_vectors(path: Path) -> list[ConceptVectorRecord]:
+    return [ConceptVectorRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def write_align_pairs(path: Path, rows: list[AlignPairRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_align_pairs(path: Path) -> list[AlignPairRecord]:
+    return [AlignPairRecord.from_dict(row) for row in read_jsonl(path)]
 
 
 def write_llm_judge_details(path: Path, rows: list[LlmJudgeDetailRecord]) -> None:

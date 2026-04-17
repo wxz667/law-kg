@@ -114,7 +114,7 @@ def test_stage_bar_display_places_summary_under_progress_bar(capsys) -> None:
 def test_builder_cli_accepts_multiple_categories() -> None:
     parser = build_parser()
 
-    args = parser.parse_args(["build-batch", "--category", "法律", "司法解释"])
+    args = parser.parse_args(["build", "--category", "法律", "司法解释"])
 
     assert args.category == ["法律", "司法解释"]
 
@@ -122,9 +122,17 @@ def test_builder_cli_accepts_multiple_categories() -> None:
 def test_builder_cli_accepts_incremental_flag() -> None:
     parser = build_parser()
 
-    args = parser.parse_args(["build-batch", "--category", "法律", "--incremental"])
+    args = parser.parse_args(["build", "--category", "法律", "--incremental"])
 
     assert args.incremental is True
+
+
+def test_builder_cli_accepts_multiple_source_ids() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["build", "--source-id", "law:one", "law:two"])
+
+    assert args.source_ids == ["law:one", "law:two"]
 
 
 def test_resolve_source_id_accepts_known_id(tmp_path: Path) -> None:

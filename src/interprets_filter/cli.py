@@ -126,7 +126,7 @@ def main() -> int:
     previous_handler = install_interrupt_handler(cancel_event)
     data_root = Path(args.data_root)
     dataset_dir = data_root / "train" / "interprets_filter"
-    reference_filter_dir = data_root / "intermediate" / "builder" / "03_reference_filter"
+    detect_dir = data_root / "intermediate" / "builder" / "03_detect"
     intermediate_dir = data_root / "intermediate" / "interprets_filter"
     logs_dir = Path("logs/interprets_filter")
     model_dir = Path(args.model_dir)
@@ -141,7 +141,7 @@ def main() -> int:
         if args.stage in {"all", "dataset"}:
             reporter.stage("dataset")
             dataset_stats = build_dataset(
-                reference_filter_dir=reference_filter_dir,
+                detect_dir=detect_dir,
                 output_dir=dataset_dir,
                 config_path=Path(args.config),
                 limit=args.sample_size,

@@ -78,13 +78,15 @@
     "CONTAINS",
     "REFERENCES",
     "INTERPRETS",
-    "MENTIONS"
+    "MENTIONS",
+    "RELATED_TO"
   ],
   "edge_type_categories": {
     "CONTAINS": "structural",
     "REFERENCES": "semantic",
     "INTERPRETS": "semantic",
-    "MENTIONS": "semantic"
+    "MENTIONS": "semantic",
+    "RELATED_TO": "semantic"
   },
   "structural_edges": [
     {
@@ -231,7 +233,8 @@
       "MENTIONS"
     ],
     "TocNode": [
-      "CONTAINS"
+      "CONTAINS",
+      "MENTIONS"
     ],
     "ProvisionNode": [
       "CONTAINS",
@@ -239,6 +242,8 @@
       "INTERPRETS",
       "MENTIONS"
     ],
-    "ConceptNode": []
+    "ConceptNode": [
+      "RELATED_TO"
+    ]
   }
 }

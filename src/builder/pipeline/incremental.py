@@ -4,13 +4,16 @@ from dataclasses import replace
 from pathlib import Path
 
 from ..contracts import (
+    ClassifyPendingRecord,
+    ExtractConceptRecord,
+    ExtractInputRecord,
     GraphBundle,
     LlmJudgeDetailRecord,
     NodeRecord,
     NormalizeIndexEntry,
     NormalizeStageIndex,
     ReferenceCandidateRecord,
-    RelationClassifyRecord,
+    ClassifyRecord,
     deduplicate_graph,
 )
 from ..io import read_normalize_index
@@ -26,7 +29,7 @@ def load_selected_source_ids_from_stage(
         return sorted(dict.fromkeys(selected_source_ids))
     if stage_name == "structure":
         return sorted(dict.fromkeys(selected_source_ids))
-    if stage_name in {"reference_filter", "relation_classify"}:
+    if stage_name in {"detect", "classify"}:
         return sorted(dict.fromkeys(selected_source_ids))
     return sorted(dict.fromkeys(selected_source_ids))
 
@@ -75,13 +78,13 @@ def filter_reference_candidates_by_graph(
     ]
 
 
-def filter_relation_classify_outputs_by_graph(
-    rows: list[RelationClassifyRecord],
+def filter_classify_outputs_by_graph(
+    rows: list[ClassifyRecord],
     *,
     graph_bundle: GraphBundle,
-) -> list[RelationClassifyRecord]:
+) -> list[ClassifyRecord]:
     node_ids = graph_node_ids(graph_bundle)
-    filtered: list[RelationClassifyRecord] = []
+    filtered: list[ClassifyRecord] = []
     for row in rows:
         if row.source_node_id not in node_ids:
             continue
@@ -93,6 +96,32 @@ def filter_relation_classify_outputs_by_graph(
         else:
             filtered.append(replace(row, target_node_ids=target_node_ids))
     return filtered
+
+
+def filter_extract_inputs_by_graph(
+    rows: list[ExtractInputRecord],
+    *,
+    graph_bundle: GraphBundle,
+) -> list[ExtractInputRecord]:
+    node_ids = graph_node_ids(graph_bundle)
+    deduped: dict[str, ExtractInputRecord] = {}
+    for row in rows:
+        if row.id in node_ids:
+            deduped[row.id] = row
+    return [deduped[key] for key in sorted(deduped)]
+
+
+def filter_extract_concepts_by_graph(
+    rows: list[ExtractConceptRecord],
+    *,
+    graph_bundle: GraphBundle,
+) -> list[ExtractConceptRecord]:
+    node_ids = graph_node_ids(graph_bundle)
+    deduped: dict[str, ExtractConceptRecord] = {}
+    for row in rows:
+        if row.id in node_ids:
+            deduped[row.id] = row
+    return list(deduped.values())
 
 
 def merge_normalize_index(
@@ -158,7 +187,7 @@ def replace_document_subgraphs(
     return deduplicate_graph(merged)
 
 
-def replace_reference_filter_outputs(
+def replace_detect_outputs(
     rows: list[ReferenceCandidateRecord],
     replacements: list[ReferenceCandidateRecord],
     *,
@@ -174,20 +203,20 @@ def replace_reference_filter_outputs(
     return filter_reference_candidates_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
 
 
-def replace_relation_classify_outputs(
-    rows: list[RelationClassifyRecord],
-    replacements: list[RelationClassifyRecord],
+def replace_classify_outputs(
+    rows: list[ClassifyRecord],
+    replacements: list[ClassifyRecord],
     *,
     graph_bundle: GraphBundle,
     active_source_ids: set[str],
-) -> list[RelationClassifyRecord]:
+) -> list[ClassifyRecord]:
     owners = owner_document_by_node(graph_bundle)
     kept = [
         row
         for row in rows
         if owner_source_id_for_node(owners, row.source_node_id) not in active_source_ids
     ]
-    return filter_relation_classify_outputs_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
+    return filter_classify_outputs_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
 
 
 def replace_llm_judge_details(
@@ -203,10 +232,96 @@ def replace_llm_judge_details(
         for row in rows
         if owner_source_id_for_node(owners, row.source_id) not in active_source_ids
     ]
-    return kept + list(replacements)
+    deduped: dict[str, LlmJudgeDetailRecord] = {}
+    ordered_rows = kept + list(replacements)
+    for index, row in enumerate(ordered_rows):
+        key = row.id or f"{row.source_id}:{row.text}:{row.label}:{index}"
+        deduped[key] = row
+    return list(deduped.values())
 
 
-def replace_entity_extraction_outputs(
+def replace_classify_pending(
+    rows: list[ClassifyPendingRecord],
+    replacements: list[ClassifyPendingRecord],
+    *,
+    graph_bundle: GraphBundle,
+    active_source_ids: set[str],
+) -> list[ClassifyPendingRecord]:
+    owners = owner_document_by_node(graph_bundle)
+    kept = [
+        row
+        for row in rows
+        if owner_source_id_for_node(owners, row.source_node_id) not in active_source_ids
+    ]
+    deduped: dict[str, ClassifyPendingRecord] = {}
+    for row in kept + list(replacements):
+        deduped[row.id] = row
+    return list(deduped.values())
+
+
+def replace_extract_inputs(
+    rows: list[ExtractInputRecord],
+    replacements: list[ExtractInputRecord],
+    *,
+    graph_bundle: GraphBundle,
+    active_source_ids: set[str],
+) -> list[ExtractInputRecord]:
+    owners = owner_document_by_node(graph_bundle)
+    kept = [
+        row
+        for row in rows
+        if owner_source_id_for_node(owners, row.id) not in active_source_ids
+    ]
+    return filter_extract_inputs_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
+
+
+def replace_extract_concepts(
+    rows: list[ExtractConceptRecord],
+    replacements: list[ExtractConceptRecord],
+    *,
+    graph_bundle: GraphBundle,
+    active_source_ids: set[str],
+) -> list[ExtractConceptRecord]:
+    owners = owner_document_by_node(graph_bundle)
+    kept = [
+        row
+        for row in rows
+        if owner_source_id_for_node(owners, row.id) not in active_source_ids
+    ]
+    return filter_extract_concepts_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
+
+
+def select_extract_inputs(
+    rows: list[ExtractInputRecord],
+    *,
+    graph_bundle: GraphBundle,
+    active_source_ids: set[str],
+) -> list[ExtractInputRecord]:
+    owners = owner_document_by_node(graph_bundle)
+    filtered = [
+        row
+        for row in filter_extract_inputs_by_graph(rows, graph_bundle=graph_bundle)
+        if owner_source_id_for_node(owners, row.id) in active_source_ids
+    ]
+    return sorted(filtered, key=lambda row: row.id)
+
+
+def select_extract_concepts(
+    rows: list[ExtractConceptRecord],
+    *,
+    graph_bundle: GraphBundle,
+    active_source_ids: set[str],
+) -> list[ExtractConceptRecord]:
+    owners = owner_document_by_node(graph_bundle)
+    filtered = [
+        row
+        for row in filter_extract_concepts_by_graph(rows, graph_bundle=graph_bundle)
+        if owner_source_id_for_node(owners, row.id) in active_source_ids
+    ]
+    return sorted(filtered, key=lambda row: row.id)
+
+
+def replace_extract_outputs(
     graph_bundle: GraphBundle,
     *,
     active_source_ids: set[str],
@@ -238,7 +353,7 @@ def replace_entity_extraction_outputs(
     return deduplicate_graph(graph_bundle)
 
 
-def replace_entity_alignment_outputs(graph_bundle: GraphBundle) -> GraphBundle:
+def replace_align_outputs(graph_bundle: GraphBundle) -> GraphBundle:
     canonical_concept_ids = {
         node.id
         for node in graph_bundle.nodes
@@ -257,7 +372,7 @@ def replace_entity_alignment_outputs(graph_bundle: GraphBundle) -> GraphBundle:
     return deduplicate_graph(graph_bundle)
 
 
-def replace_implicit_reasoning_outputs(
+def replace_infer_outputs(
     graph_bundle: GraphBundle,
     *,
     active_source_ids: set[str],

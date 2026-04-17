@@ -2,9 +2,9 @@
 
 ## 项目简介
 
-`law-kg` 是一个面向中文规范性文件的知识图谱构建项目。项目从结构化元数据与原始 `DOCX` 文档中提取文书结构、显式关系、实体与隐式关系特征，并以 JSONL 图产物形式输出，供后续检索、分析和图数据库导入使用。
+`law-kg` 是一个面向中文规范性文件的知识图谱构建项目。项目从结构化元数据与原始 `DOCX` 文档中提取文书结构、显式关系、法条概念特征与隐式关系特征，并以 JSONL 图产物形式输出，供后续检索、分析和图数据库导入使用。
 
-项目采用统一 `src/` 源码目录组织，`src/builder/` 为主构建流水线，`src/interprets_filter/`、`src/ner/`、`src/rgcn/` 为相关训练与推理模块。
+项目采用统一 `src/` 源码目录组织，`src/builder/` 为主构建流水线，`src/interprets_filter/`、`src/rgcn/` 为相关训练与推理模块。
 
 ## 功能范围
 
@@ -13,7 +13,7 @@
 - 规范性文件标准化清洗与逻辑文书切分
 - 文书目录层级、条款层级与正文片段的结构图构建
 - 显式引用候选筛选、目标定位与关系分类
-- 实体抽取、实体对齐与概念节点构建
+- 按条聚合的法条概念关键词抽取、实体对齐与概念节点构建
 - 隐式关系特征生成与推理
 - 图谱产物拆分导出，用于 Neo4j 与 Elasticsearch 等下游系统
 - `interprets_filter` 模型的数据集构建、训练、预测与模型资产管理
@@ -24,11 +24,11 @@
 
 1. `normalize`
 2. `structure`
-3. `reference_filter`
-4. `relation_classify`
-5. `entity_extraction`
-6. `entity_alignment`
-7. `implicit_reasoning`
+3. `detect`
+4. `classify`
+5. `extract`
+6. `align`
+7. `infer`
 
 各阶段职责如下：
 
@@ -36,15 +36,15 @@
   读取 `data/source/metadata/*.json` 与 `data/source/docs/*.docx`，完成逻辑文书切分、正文清洗与标准化索引生成。
 - `structure`
   基于标准化结果构建文档节点、目录节点、条款节点与结构边。
-- `reference_filter`
+- `detect`
   在文档文本中识别显式引用，生成候选引用与目标节点映射。
-- `relation_classify`
+- `classify`
   对候选引用执行规则修正、模型判别与可选的 LLM 仲裁，输出 `REFERENCES` 与 `INTERPRETS` 边。
-- `entity_extraction`
-  从文本节点中抽取实体与概念候选。
-- `entity_alignment`
-  对概念候选进行归并和对齐，形成统一概念节点。
-- `implicit_reasoning`
+- `extract`
+  以 `aggregate / extract` 两个子阶段执行：先按 `article/segment/document` 聚合法条内容并持久化输入，再调用 LLM 抽取概念关键词与原文证据，输出中间产物而不改图。
+- `align`
+  后续将消费 `extract` 中间产物做概念归并和对齐，再统一落图。
+- `infer`
   生成隐式关系推理特征并补充推理边。
 
 ## 图谱产物
@@ -70,6 +70,11 @@
 - `nodes.jsonl`
 - `edges.jsonl`
 
+中间抽取阶段额外输出：
+
+- `data/intermediate/builder/05_extract/inputs.jsonl`
+- `data/intermediate/builder/05_extract/concepts.jsonl`
+
 阶段状态与增量构建信息写入：
 
 - `data/manifest/builder/{stage_name}.json`
@@ -84,7 +89,6 @@
 
 - `src/builder/`：主构建流水线
 - `src/interprets_filter/`：解释关系分类数据集、训练与预测模块
-- `src/ner/`：NER 数据集、训练与预测模块
 - `src/rgcn/`：隐式关系推理数据集、训练与预测模块
 - `src/crawler/`：采集与原始数据整理模块
 - `utils/`：仓库级公共组件与外部接口适配层
@@ -94,6 +98,7 @@
 - `configs/config.json`：项目运行配置
 - `configs/schema.json`：图谱结构 schema
 - `guideline.md`：项目实施规范
+- `extract_handoff.md`：第 5 阶段当前实现与后续接力说明
 
 ### 数据目录
 
@@ -121,7 +126,7 @@ scripts/build \
   --data-root data \
   --source-id 2c909fdd678bf17901678bf5aba10073 \
   --start normalize \
-  --end relation_classify
+  --end classify
 ```
 
 ### 批量构建
@@ -144,4 +149,3 @@ scripts/split_export \
   --graph data/exports/json \
   --output-root data/exports/import
 ```
-

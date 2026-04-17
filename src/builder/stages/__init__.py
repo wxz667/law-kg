@@ -1,17 +1,19 @@
-from .entity_alignment import run as run_entity_alignment
-from .entity_extraction import run as run_entity_extraction
-from .implicit_reasoning import run as run_implicit_reasoning
+from .align import run as run_align
+from .classify import run as run_classify
+from .detect import run as run_detect
+from .embed import run as run_embed
+from .extract import run as run_extract
+from .infer import run as run_infer
 from .normalize import run as run_normalize
-from .reference_filter import run as run_reference_filter
-from .relation_classify import run as run_relation_classify
 from .structure import run as run_structure
 
 __all__ = [
-    "run_entity_alignment",
-    "run_entity_extraction",
-    "run_implicit_reasoning",
+    "run_embed",
+    "run_align",
+    "run_extract",
+    "run_infer",
     "run_normalize",
-    "run_reference_filter",
-    "run_relation_classify",
+    "run_detect",
+    "run_classify",
     "run_structure",
 ]

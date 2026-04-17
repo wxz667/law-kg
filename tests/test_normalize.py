@@ -132,14 +132,12 @@ def test_normalize_records_missing_documents_without_stopping(tmp_path: Path) ->
 
     index = run_normalize(tmp_path)
     saved_index = read_normalize_index(tmp_path / "intermediate" / "builder" / "01_normalize" / "normalize_index.json")
-    log_payload = json.loads((tmp_path.parent / "logs" / "builder" / "normalize-report.json").read_text(encoding="utf-8"))
-
     assert index.stats["succeeded_sources"] == 1
     assert index.stats["failed_sources"] == 1
     assert saved_index.stats == index.stats
     missing_entry = next(entry for entry in index.entries if entry.source_id == "law:missing")
     assert missing_entry.error_type == "missing_document"
-    assert any(entry["source_id"] == "law:missing" for entry in log_payload["entries"])
+    assert not (tmp_path.parent / "logs" / "builder" / "normalize-report.json").exists()
 
 
 def test_normalize_keeps_only_embedded_substantive_document(tmp_path: Path) -> None:
@@ -235,7 +233,7 @@ def test_structure_uses_source_id_and_parses_appendix(tmp_path: Path) -> None:
     bundle = run_structure(tmp_path)
 
     document_node = next(node for node in bundle.nodes if node.level == "document")
-    assert document_node.id == "law:sample"
+    assert document_node.id == "document:law:sample"
     assert document_node.name == "示例法"
     assert document_node.category == "法律"
     assert any(node.level == "article" and node.name == "第一条" for node in bundle.nodes)
@@ -272,7 +270,7 @@ def test_structure_falls_back_to_single_body_segment_for_unstructured_content(tm
     assert len(segments) == 1
     assert segments[0].name == "正文"
     assert segments[0].text.startswith("海南省人民检察院：")
-    assert bundle.metadata["stage"] == "structure"
+    assert any(node.level == "document" and node.id == "document:reply:sample" for node in bundle.nodes)
 
 
 def test_normalize_filters_toc_and_structure_collapses_single_paragraph_items_to_article(tmp_path: Path) -> None:

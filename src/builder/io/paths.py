@@ -5,11 +5,12 @@ from pathlib import Path
 STAGE_OUTPUT_DIRS = {
     "normalize": "01_normalize",
     "structure": "02_structure",
-    "reference_filter": "03_reference_filter",
-    "relation_classify": "04_relation_classify",
-    "entity_extraction": "05_entity_extraction",
-    "entity_alignment": "06_entity_alignment",
-    "implicit_reasoning": "07_implicit_reasoning",
+    "detect": "03_detect",
+    "classify": "04_classify",
+    "extract": "05_extract",
+    "embed": "06_embed",
+    "align": "07_align",
+    "infer": "08_infer",
 }
 
 
@@ -31,28 +32,44 @@ class BuildLayout:
         return self.stage_dir(stage_name) / "edges.jsonl"
 
     def stage_primary_artifact_path(self, stage_name: str) -> Path:
-        if stage_name == "reference_filter":
-            return self.reference_filter_candidates_path()
-        if stage_name == "relation_classify":
-            return self.relation_classify_plans_path()
+        if stage_name == "detect":
+            return self.detect_candidates_path()
+        if stage_name == "classify":
+            return self.classify_results_path()
+        if stage_name == "extract":
+            return self.extract_concepts_path()
+        if stage_name == "embed":
+            return self.embed_concepts_path()
         if self.stage_nodes_path(stage_name).exists():
             return self.stage_nodes_path(stage_name)
         return self.stage_edges_path(stage_name)
 
-    def reference_filter_candidates_path(self) -> Path:
-        return self.stage_dir("reference_filter") / "candidates.jsonl"
+    def detect_candidates_path(self) -> Path:
+        return self.stage_dir("detect") / "candidates.jsonl"
 
-    def relation_classify_plans_path(self) -> Path:
-        return self.stage_dir("relation_classify") / "results.jsonl"
+    def classify_results_path(self) -> Path:
+        return self.stage_dir("classify") / "results.jsonl"
 
-    def relation_classify_llm_judge_path(self) -> Path:
-        return self.stage_dir("relation_classify") / "llm_judgments.jsonl"
+    def classify_pending_path(self) -> Path:
+        return self.stage_dir("classify") / "pending.jsonl"
 
-    def reference_filter_log_path(self) -> Path:
-        return self.logs_root / "reference_filter" / "report.json"
+    def classify_llm_judge_path(self) -> Path:
+        return self.stage_dir("classify") / "llm_judgments.jsonl"
 
-    def relation_classify_log_path(self) -> Path:
-        return self.logs_root / "relation_classify" / "report.json"
+    def extract_inputs_path(self) -> Path:
+        return self.stage_dir("extract") / "inputs.jsonl"
+
+    def extract_concepts_path(self) -> Path:
+        return self.stage_dir("extract") / "concepts.jsonl"
+
+    def embed_concepts_path(self) -> Path:
+        return self.stage_dir("embed") / "concepts.jsonl"
+
+    def embed_vectors_path(self) -> Path:
+        return self.stage_dir("embed") / "vectors.jsonl"
+
+    def align_pairs_path(self) -> Path:
+        return self.stage_dir("align") / "pairs.jsonl"
 
     def normalize_documents_dir(self) -> Path:
         return self.stage_dir("normalize") / "documents"
@@ -62,9 +79,6 @@ class BuildLayout:
 
     def normalize_index_path(self) -> Path:
         return self.stage_dir("normalize") / "normalize_index.json"
-
-    def normalize_log_path(self) -> Path:
-        return self.logs_root / "normalize-report.json"
 
     def job_log_path(self, job_id: str) -> Path:
         return self.logs_root / f"{job_id}.json"
@@ -87,5 +101,3 @@ def ensure_stage_dirs(data_root: Path) -> None:
     (data_root / "manifest" / "builder").mkdir(parents=True, exist_ok=True)
     logs_root = data_root.parent / "logs" / "builder"
     logs_root.mkdir(parents=True, exist_ok=True)
-    (logs_root / "reference_filter").mkdir(parents=True, exist_ok=True)
-    (logs_root / "relation_classify").mkdir(parents=True, exist_ok=True)

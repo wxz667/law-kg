@@ -4,81 +4,105 @@ import json
 import shutil
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
-from ..contracts import GraphBundle, JobLogRecord, StageRecord, StageStateManifest
+from ..contracts import GraphBundle, JobLogRecord, StageRecord, StageStateManifest, SubstageStateManifest
 from ..io import (
     BuildLayout,
     ensure_stage_dirs,
+    read_align_pairs,
+    read_classify_pending,
+    read_classify_results,
+    read_concept_vectors,
+    read_embedded_concepts,
+    read_extract_concepts,
+    read_extract_inputs,
     read_llm_judge_details,
     read_normalize_index,
     read_reference_candidates,
-    read_relation_plans,
     read_stage_edges,
     read_stage_manifest,
     read_stage_nodes,
     write_job_log,
-    write_json,
+    write_align_pairs,
+    write_classify_pending,
+    write_classify_results,
+    write_concept_vectors,
+    write_embedded_concepts,
+    write_extract_concepts,
+    write_extract_inputs,
     write_llm_judge_details,
     write_normalize_index,
     write_reference_candidates,
-    write_relation_plans,
     write_stage_edges,
     write_stage_manifest,
     write_stage_nodes,
 )
 from ..stages import (
-    run_entity_alignment,
-    run_entity_extraction,
-    run_implicit_reasoning,
+    run_embed,
+    run_extract,
+    run_infer,
     run_normalize,
-    run_reference_filter,
-    run_relation_classify,
+    run_detect,
     run_structure,
 )
-from ..stages.reference_filter.run import count_reference_filter_units
-from ..stages.relation_classify.run import count_relation_classify_units
-from ..stages.relation_classify.materialize import materialize_relation_plans
+from ..stages.align.classify import classify_pairs
+from ..stages.align.pair import build_pair_stats, build_pairs
+from ..stages.align.resolve import run as resolve_align_pairs
+from ..stages.detect.run import count_detect_units
+from ..stages.embed.run import build_embed_stats, resolve_embed_runtime_config
+from ..stages.extract.aggregate import build_extract_inputs, count_extract_units, filter_extract_source_ids
+from ..stages.classify.run import count_classify_units
+from ..stages.classify.run import build_classify_context, run_llm_phase, run_model_phase, select_candidates
+from ..stages.classify.materialize import materialize_classify_results
 from ..utils.ids import slugify, timestamp_utc
+from ..utils.locator import source_id_from_node_id
 from .incremental import (
     filter_reference_candidates_by_graph,
-    filter_relation_classify_outputs_by_graph,
+    filter_classify_outputs_by_graph,
     replace_document_subgraphs,
+    replace_extract_concepts,
+    replace_extract_inputs,
+    select_extract_concepts,
+    select_extract_inputs,
     replace_llm_judge_details,
-    replace_reference_filter_outputs,
-    replace_relation_classify_outputs,
+    replace_classify_pending,
+    replace_detect_outputs,
+    replace_classify_outputs,
 )
 from .runtime import PipelineRuntime
 
 STAGE_SEQUENCE = (
     "normalize",
     "structure",
-    "reference_filter",
-    "relation_classify",
-    "entity_extraction",
-    "entity_alignment",
-    "implicit_reasoning",
+    "detect",
+    "classify",
+    "extract",
+    "embed",
+    "align",
+    "infer",
 )
 
-GRAPH_STAGES = {"structure", "relation_classify", "entity_extraction", "entity_alignment", "implicit_reasoning"}
-GRAPH_NODE_OUTPUT_STAGES = {"structure", "entity_extraction", "entity_alignment"}
-GRAPH_EDGE_OUTPUT_STAGES = {"structure", "relation_classify", "entity_extraction", "entity_alignment", "implicit_reasoning"}
+GRAPH_STAGES = {"structure", "classify", "align", "infer"}
+GRAPH_NODE_OUTPUT_STAGES = {"structure", "align"}
+GRAPH_EDGE_OUTPUT_STAGES = {"structure", "classify", "align", "infer"}
 GRAPH_INPUT_STAGE = {
     "structure": "",
-    "reference_filter": "structure",
-    "relation_classify": "structure",
-    "entity_extraction": "relation_classify",
-    "entity_alignment": "entity_extraction",
-    "implicit_reasoning": "entity_alignment",
+    "detect": "structure",
+    "classify": "structure",
+    "extract": "classify",
+    "embed": "classify",
+    "align": "classify",
+    "infer": "align",
 }
 
 
 def build_knowledge_graph(
     *,
-    source_id: str,
+    source_id: str | list[str],
     data_root: Path,
     start_stage: str | None = None,
-    through_stage: str = "implicit_reasoning",
+    through_stage: str = "infer",
     force_rebuild: bool = False,
     incremental: bool = False,
     report_progress: bool = False,
@@ -91,14 +115,28 @@ def build_knowledge_graph(
 ) -> dict[str, object]:
     del report_progress
     del incremental
+    source_ids = [source_id] if isinstance(source_id, str) else list(source_id)
+    selected_source_ids = [str(value).strip() for value in source_ids if str(value).strip()]
+    if not selected_source_ids:
+        raise ValueError("build_knowledge_graph requires at least one source_id.")
+    job_id = (
+        f"build-{slugify(selected_source_ids[0])}"
+        if len(selected_source_ids) == 1
+        else f"build-{timestamp_utc().replace(':', '').replace('-', '')}"
+    )
+    build_target = (
+        selected_source_ids[0]
+        if len(selected_source_ids) == 1
+        else f"selected:{','.join(selected_source_ids)}"
+    )
     return _build_from_source_ids(
-        source_ids=[source_id],
+        source_ids=selected_source_ids,
         data_root=data_root,
         start_stage=start_stage,
         through_stage=through_stage,
         force_rebuild=force_rebuild,
-        job_id=f"build-{slugify(source_id)}",
-        source_path_label=source_id,
+        job_id=job_id,
+        source_path_label=build_target,
         stage_callback=stage_callback,
         stage_progress_callback=stage_progress_callback,
         stage_name_callback=stage_name_callback,
@@ -113,7 +151,7 @@ def build_batch_knowledge_graph(
     pattern: str = "*.docx",
     category: str | list[str] | None = None,
     start_stage: str | None = None,
-    through_stage: str = "implicit_reasoning",
+    through_stage: str = "infer",
     force_rebuild: bool = False,
     incremental: bool = False,
     report_progress: bool = False,
@@ -207,11 +245,9 @@ def _build_from_source_ids(
                     stage_record.artifact_paths = {
                         "primary": str(layout.normalize_index_path()),
                         "index": str(layout.normalize_index_path()),
-                        "log": str(layout.normalize_log_path()),
                     }
                     stage_record.stats = build_normalize_stage_stats(partial_entries)
                     write_normalize_index(layout.normalize_index_path(), snapshot_index)
-                    write_json(layout.normalize_log_path(), snapshot_index.to_dict())
                     write_stage_state(
                         layout,
                         StageStateManifest(
@@ -246,7 +282,6 @@ def _build_from_source_ids(
                 stage_record.artifact_paths = {
                     "primary": str(layout.normalize_index_path()),
                     "index": str(layout.normalize_index_path()),
-                    "log": str(layout.normalize_log_path()),
                 }
                 stage_record.stats = build_normalize_stage_stats(selected_entries)
                 write_stage_state(
@@ -372,7 +407,7 @@ def _build_from_source_ids(
                         graph_bundle=current_graph,
                     ),
                 )
-            elif stage_name == "reference_filter":
+            elif stage_name == "detect":
                 input_source_ids = resolve_stage_source_ids(layout, stage_name, selected_source_ids)
                 skipped_source_ids = reusable_artifact_source_ids(
                     layout,
@@ -384,46 +419,34 @@ def _build_from_source_ids(
                 base_graph = load_graph_snapshot(layout, GRAPH_INPUT_STAGE[stage_name])
                 checkpoint_every = runtime.stage_checkpoint_every(stage_name)
                 existing_rows = (
-                    read_reference_candidates(layout.reference_filter_candidates_path())
-                    if layout.reference_filter_candidates_path().exists()
+                    read_reference_candidates(layout.detect_candidates_path())
+                    if layout.detect_candidates_path().exists()
                     else []
                 )
-                skipped_units = count_reference_filter_units(base_graph, set(skipped_source_ids))
+                skipped_units = count_detect_units(base_graph, set(skipped_source_ids))
                 if process_source_ids:
 
-                    def checkpoint_reference_filter(
+                    def checkpoint_detect(
                         snapshot_candidates: list,
                         snapshot_stats: dict[str, object],
                         snapshot_profiling: dict[str, object],
                         processed_checkpoint_source_ids: list[str],
                     ) -> None:
-                        merged_snapshot = replace_reference_filter_outputs(
+                        normalized_checkpoint_source_ids = normalize_source_ids(processed_checkpoint_source_ids)
+                        merged_snapshot = replace_detect_outputs(
                             existing_rows,
                             snapshot_candidates,
                             graph_bundle=base_graph,
                             active_source_ids=set(process_source_ids),
                         )
-                        write_reference_candidates(layout.reference_filter_candidates_path(), merged_snapshot)
-                        write_json(
-                            layout.reference_filter_log_path(),
-                            {
-                                "status": "running",
-                                "stats": finalize_stage_work_stats(
-                                    dict(snapshot_stats),
-                                    processed_source_ids=processed_checkpoint_source_ids,
-                                    skipped_source_ids=skipped_source_ids,
-                                    skipped_work_units=skipped_units,
-                                ),
-                                "profiling": snapshot_profiling,
-                            },
-                        )
+                        write_reference_candidates(layout.detect_candidates_path(), merged_snapshot)
                         stage_record.artifact_paths = {
-                            "primary": str(layout.reference_filter_candidates_path()),
-                            "candidates": str(layout.reference_filter_candidates_path()),
+                            "primary": str(layout.detect_candidates_path()),
+                            "candidates": str(layout.detect_candidates_path()),
                         }
                         stage_record.stats = finalize_stage_work_stats(
                             dict(snapshot_stats),
-                            processed_source_ids=processed_checkpoint_source_ids,
+                            processed_source_ids=normalized_checkpoint_source_ids,
                             skipped_source_ids=skipped_source_ids,
                             skipped_work_units=skipped_units,
                         )
@@ -435,7 +458,7 @@ def _build_from_source_ids(
                                 job_id=job_id,
                                 build_target=source_path_label,
                                 source_ids=selected_source_ids,
-                                processed_source_ids=processed_checkpoint_source_ids,
+                                processed_source_ids=normalized_checkpoint_source_ids,
                                 input_stage=GRAPH_INPUT_STAGE[stage_name],
                                 artifact_paths=stage_record.artifact_paths,
                                 stats=stage_record.stats,
@@ -444,7 +467,7 @@ def _build_from_source_ids(
                         )
                         write_job_log(layout.job_log_path(job_id), log_record)
 
-                    result = run_reference_filter(
+                    result = run_detect(
                         base_graph,
                         runtime,
                         source_document_ids=set(process_source_ids),
@@ -452,30 +475,22 @@ def _build_from_source_ids(
                             stage_progress_callback, stage_name, current, total_items
                         ),
                         checkpoint_every=checkpoint_every,
-                        checkpoint_callback=checkpoint_reference_filter,
+                        checkpoint_callback=checkpoint_detect,
                         cancel_event=cancel_event,
                     )
-                    merged_rows = replace_reference_filter_outputs(
+                    merged_rows = replace_detect_outputs(
                         existing_rows,
                         result.candidates,
                         graph_bundle=base_graph,
                         active_source_ids=set(process_source_ids),
                     )
                     merged_rows = filter_reference_candidates_by_graph(merged_rows, graph_bundle=base_graph)
-                    write_reference_candidates(layout.reference_filter_candidates_path(), merged_rows)
+                    write_reference_candidates(layout.detect_candidates_path(), merged_rows)
                     stage_record.stats = finalize_stage_work_stats(
                         dict(result.stats),
                         processed_source_ids=process_source_ids,
                         skipped_source_ids=skipped_source_ids,
                         skipped_work_units=skipped_units,
-                    )
-                    write_json(
-                        layout.reference_filter_log_path(),
-                        {
-                            "status": "completed",
-                            "stats": dict(stage_record.stats),
-                            "profiling": result.profiling,
-                        },
                     )
                 else:
                     emit_idle_stage_progress(stage_progress_callback, stage_name)
@@ -488,8 +503,8 @@ def _build_from_source_ids(
                         candidate_count=len(existing_rows),
                     )
                 stage_record.artifact_paths = {
-                    "primary": str(layout.reference_filter_candidates_path()),
-                    "candidates": str(layout.reference_filter_candidates_path()),
+                    "primary": str(layout.detect_candidates_path()),
+                    "candidates": str(layout.detect_candidates_path()),
                 }
                 write_stage_state(
                     layout,
@@ -505,7 +520,7 @@ def _build_from_source_ids(
                         stats=stage_record.stats,
                     ),
                 )
-            elif stage_name == "relation_classify":
+            elif stage_name == "classify":
                 input_source_ids = resolve_stage_source_ids(layout, stage_name, selected_source_ids)
                 skipped_source_ids = reusable_artifact_source_ids(
                     layout,
@@ -515,71 +530,802 @@ def _build_from_source_ids(
                 )
                 process_source_ids = subtract_source_ids(input_source_ids, skipped_source_ids)
                 base_graph = load_graph_snapshot(layout, GRAPH_INPUT_STAGE[stage_name])
-                candidates = read_reference_candidates(layout.reference_filter_candidates_path())
+                candidates = read_reference_candidates(layout.detect_candidates_path())
                 checkpoint_every = runtime.stage_checkpoint_every(stage_name)
+                classify_context = build_classify_context(base_graph, set(process_source_ids) if process_source_ids else set())
+                scoped_candidates = select_candidates(candidates, classify_context)
+                candidate_unit_ids = [row.id for row in scoped_candidates]
+                candidate_source_map = build_unit_source_map(
+                    {
+                        row.id: owner_source_id(
+                            classify_context.owner_document_by_node.get(row.source_node_id, row.source_node_id)
+                        )
+                        for row in scoped_candidates
+                    }
+                )
                 existing_results = (
-                    read_relation_plans(layout.relation_classify_plans_path())
-                    if layout.relation_classify_plans_path().exists()
+                    read_classify_results(layout.classify_results_path())
+                    if layout.classify_results_path().exists()
+                    else []
+                )
+                existing_pending = (
+                    read_classify_pending(layout.classify_pending_path())
+                    if layout.classify_pending_path().exists()
                     else []
                 )
                 existing_llm = (
-                    read_llm_judge_details(layout.relation_classify_llm_judge_path())
-                    if layout.relation_classify_llm_judge_path().exists()
+                    read_llm_judge_details(layout.classify_llm_judge_path())
+                    if layout.classify_llm_judge_path().exists()
                     else []
                 )
-                skipped_units = count_relation_classify_units(base_graph, candidates, set(skipped_source_ids))
+                skipped_units = count_classify_units(base_graph, candidates, set(skipped_source_ids))
+                substage_states: dict[str, SubstageStateManifest] = {}
+
+                def classify_active_results(rows: list) -> list:
+                    return [
+                        row
+                        for row in rows
+                        if owner_source_id(
+                            classify_context.owner_document_by_node.get(row.source_node_id, row.source_node_id)
+                        ) in set(process_source_ids)
+                    ]
+
+                def classify_active_pending(rows: list) -> list:
+                    return [
+                        row
+                        for row in rows
+                        if owner_source_id(
+                            classify_context.owner_document_by_node.get(row.source_node_id, row.source_node_id)
+                        ) in set(process_source_ids)
+                    ]
+
+                def classify_active_llm(rows: list) -> list:
+                    return [
+                        row
+                        for row in rows
+                        if owner_source_id(
+                            classify_context.owner_document_by_node.get(row.source_id, row.source_id)
+                        ) in set(process_source_ids)
+                    ]
+
                 if process_source_ids:
-                    def checkpoint_relation_classify(
-                        snapshot_results: list,
-                        snapshot_llm_judgments: list,
-                        snapshot_stats: dict[str, object],
-                        completed_units: int,
-                        total_units: int,
-                        processed_checkpoint_source_ids: list[str],
-                    ) -> None:
-                        merged_results = replace_relation_classify_outputs(
+                    model_reused_unit_ids = reusable_substage_unit_ids(
+                        layout,
+                        stage_name,
+                        "model",
+                        candidate_unit_ids,
+                        force_rebuild=force_rebuild,
+                    )
+                    model_process_candidates = [
+                        row for row in scoped_candidates if row.id not in set(model_reused_unit_ids)
+                    ]
+                    stage_record.artifact_paths = classify_artifact_paths(layout)
+                    write_stage_state(
+                        layout,
+                        build_stage_manifest(
+                            stage_name=stage_name,
+                            layout=layout,
+                            job_id=job_id,
+                            build_target=source_path_label,
+                            source_ids=selected_source_ids,
+                            processed_source_ids=[],
+                            input_stage=GRAPH_INPUT_STAGE[stage_name],
+                            artifact_paths=stage_record.artifact_paths,
+                            stats={},
+                            status="running",
+                            substage_states=substage_states,
+                        ),
+                    )
+
+                    if model_process_candidates:
+                        def checkpoint_classify_model(
+                            snapshot_results: list,
+                            snapshot_pending: list,
+                            snapshot_stats: dict[str, object],
+                            completed_units: int,
+                            total_units: int,
+                            processed_checkpoint_source_ids: list[str],
+                            processed_checkpoint_unit_ids: list[str],
+                        ) -> None:
+                            merged_results = replace_classify_outputs(
+                                existing_results,
+                                snapshot_results,
+                                graph_bundle=base_graph,
+                                active_source_ids=set(process_source_ids),
+                            )
+                            merged_results = filter_classify_outputs_by_graph(merged_results, graph_bundle=base_graph)
+                            merged_pending = replace_classify_pending(
+                                existing_pending,
+                                snapshot_pending,
+                                graph_bundle=base_graph,
+                                active_source_ids=set(process_source_ids),
+                            )
+                            write_classify_results(layout.classify_results_path(), merged_results)
+                            write_classify_pending(layout.classify_pending_path(), merged_pending)
+                            model_output_unit_ids = [row.id for row in classify_active_pending(merged_pending)]
+                            substage_states["model"] = build_unit_substage_manifest(
+                                stage_name="model",
+                                unit_ids=candidate_unit_ids,
+                                unit_source_map=candidate_source_map,
+                                processed_unit_ids=sorted(
+                                    set(model_reused_unit_ids) | set(processed_checkpoint_unit_ids)
+                                ),
+                                output_unit_ids=model_output_unit_ids,
+                                skipped_unit_ids=model_reused_unit_ids,
+                                stats=build_stage_work_stats(
+                                    input_source_ids=process_source_ids,
+                                    processed_source_ids=processed_checkpoint_source_ids,
+                                    skipped_source_ids=source_ids_for_unit_ids(model_reused_unit_ids, candidate_source_map),
+                                    work_units_total=total_units,
+                                    work_units_completed=completed_units,
+                                    work_units_skipped=len(model_reused_unit_ids),
+                                    candidate_count=len(candidate_unit_ids),
+                                    result_count=len(classify_active_results(merged_results)),
+                                    pending_count=len(model_output_unit_ids),
+                                ),
+                                status="running",
+                            )
+                            stage_record.stats = build_stage_work_stats(
+                                input_source_ids=input_source_ids,
+                                processed_source_ids=processed_checkpoint_source_ids,
+                                skipped_source_ids=skipped_source_ids,
+                                work_units_total=len(candidate_unit_ids) + skipped_units,
+                                work_units_completed=completed_units,
+                                work_units_skipped=skipped_units + len(model_reused_unit_ids),
+                                updated_edges=len(classify_active_results(merged_results)),
+                                candidate_count=len(candidate_unit_ids) + skipped_units,
+                                result_count=len(classify_active_results(merged_results)),
+                            )
+                            stage_record.failures = []
+                            write_stage_state(
+                                layout,
+                                build_stage_manifest(
+                                    stage_name=stage_name,
+                                    layout=layout,
+                                    job_id=job_id,
+                                    build_target=source_path_label,
+                                    source_ids=selected_source_ids,
+                                    processed_source_ids=processed_checkpoint_source_ids,
+                                    input_stage=GRAPH_INPUT_STAGE[stage_name],
+                                    artifact_paths=stage_record.artifact_paths,
+                                    stats=stage_record.stats,
+                                    status="running",
+                                    substage_states=substage_states,
+                                ),
+                            )
+                            write_job_log(layout.job_log_path(job_id), log_record)
+
+                        model_result = run_model_phase(
+                            base_graph,
+                            runtime,
+                            model_process_candidates,
+                            progress_callback=offset_stage_progress_callback(
+                                stage_progress_callback,
+                                f"{stage_name}::model",
+                                skipped_units=len(model_reused_unit_ids),
+                                total_units=len(candidate_unit_ids),
+                            ),
+                            checkpoint_every=checkpoint_every,
+                            checkpoint_callback=checkpoint_classify_model,
+                            cancel_event=cancel_event,
+                        )
+                        merged_results = replace_classify_outputs(
                             existing_results,
-                            snapshot_results,
+                            model_result.results,
                             graph_bundle=base_graph,
                             active_source_ids=set(process_source_ids),
                         )
-                        merged_results = filter_relation_classify_outputs_by_graph(
-                            merged_results,
-                            graph_bundle=base_graph,
-                        )
-                        merged_llm = replace_llm_judge_details(
-                            existing_llm,
-                            snapshot_llm_judgments,
+                        merged_results = filter_classify_outputs_by_graph(merged_results, graph_bundle=base_graph)
+                        merged_pending = replace_classify_pending(
+                            existing_pending,
+                            model_result.pending_records,
                             graph_bundle=base_graph,
                             active_source_ids=set(process_source_ids),
                         )
-                        write_relation_plans(layout.relation_classify_plans_path(), merged_results)
-                        write_llm_judge_details(layout.relation_classify_llm_judge_path(), merged_llm)
-                        checkpoint_graph = materialize_relation_plans(base_graph, merged_results)
-                        write_stage_graph(layout, stage_name, checkpoint_graph, write_nodes=False, write_edges=True)
-                        stage_record.artifact_paths = relation_artifact_paths(layout)
-                        stage_record.stats = build_stage_work_stats(
-                            input_source_ids=input_source_ids,
-                            processed_source_ids=processed_checkpoint_source_ids,
-                            skipped_source_ids=skipped_source_ids,
-                            work_units_total=total_units + skipped_units,
-                            work_units_completed=completed_units,
-                            work_units_skipped=skipped_units,
-                            updated_edges=int(snapshot_stats.get("result_count", 0)),
-                            candidate_count=int(snapshot_stats.get("candidate_count", 0)),
-                            result_count=int(snapshot_stats.get("result_count", 0)),
+                        write_classify_results(layout.classify_results_path(), merged_results)
+                        write_classify_pending(layout.classify_pending_path(), merged_pending)
+                        existing_results = merged_results
+                        existing_pending = merged_pending
+                        model_output_unit_ids = [row.id for row in classify_active_pending(merged_pending)]
+                        substage_states["model"] = build_unit_substage_manifest(
+                            stage_name="model",
+                            unit_ids=candidate_unit_ids,
+                            unit_source_map=candidate_source_map,
+                            processed_unit_ids=sorted(
+                                set(model_reused_unit_ids) | set(model_result.processed_candidate_ids)
+                            ),
+                            output_unit_ids=model_output_unit_ids,
+                            skipped_unit_ids=model_reused_unit_ids,
+                            stats=build_stage_work_stats(
+                                input_source_ids=process_source_ids,
+                                processed_source_ids=model_result.processed_source_ids,
+                                skipped_source_ids=source_ids_for_unit_ids(model_reused_unit_ids, candidate_source_map),
+                                work_units_total=len(candidate_unit_ids),
+                                work_units_completed=len(model_result.processed_candidate_ids),
+                                work_units_skipped=len(model_reused_unit_ids),
+                                candidate_count=len(candidate_unit_ids),
+                                result_count=len(classify_active_results(merged_results)),
+                                pending_count=len(model_output_unit_ids),
+                            ),
+                            status="completed",
                         )
-                        stage_record.stats.update(
+                    else:
+                        emit_prefilled_stage_progress(
+                            stage_progress_callback,
+                            f"{stage_name}::model",
+                            current=len(model_reused_unit_ids),
+                            total=len(candidate_unit_ids),
+                        )
+                        model_output_unit_ids = substage_output_unit_ids(layout, stage_name, "model", candidate_unit_ids)
+                        substage_states["model"] = build_unit_substage_manifest(
+                            stage_name="model",
+                            unit_ids=candidate_unit_ids,
+                            unit_source_map=candidate_source_map,
+                            processed_unit_ids=model_reused_unit_ids,
+                            output_unit_ids=model_output_unit_ids,
+                            skipped_unit_ids=model_reused_unit_ids,
+                            stats=build_stage_work_stats(
+                                input_source_ids=process_source_ids,
+                                processed_source_ids=[],
+                                skipped_source_ids=source_ids_for_unit_ids(model_reused_unit_ids, candidate_source_map),
+                                work_units_total=len(candidate_unit_ids),
+                                work_units_completed=0,
+                                work_units_skipped=len(model_reused_unit_ids),
+                                candidate_count=len(candidate_unit_ids),
+                                result_count=len(classify_active_results(existing_results)),
+                                pending_count=len(model_output_unit_ids),
+                            ),
+                            status="completed",
+                        )
+
+                    llm_scope_unit_ids = list(substage_states["model"].output_unit_ids)
+                    llm_unit_source_map = {
+                        unit_id: candidate_source_map[unit_id]
+                        for unit_id in llm_scope_unit_ids
+                        if unit_id in candidate_source_map
+                    }
+                    llm_reused_unit_ids = reusable_substage_unit_ids(
+                        layout,
+                        stage_name,
+                        "llm_judge",
+                        llm_scope_unit_ids,
+                        force_rebuild=force_rebuild,
+                    )
+                    llm_process_pending = [
+                        row
+                        for row in classify_active_pending(existing_pending)
+                        if row.id in set(llm_scope_unit_ids) and row.id not in set(llm_reused_unit_ids)
+                    ]
+                    existing_active_results = {row.id: row for row in classify_active_results(existing_results)}
+                    existing_active_llm = {
+                        (row.id or f"{row.source_id}:{row.text}:{row.label}"): row
+                        for row in classify_active_llm(existing_llm)
+                    }
+                    if llm_process_pending:
+                        def checkpoint_classify_llm(snapshot_results: list, snapshot_llm_judgments: list, completed_units: int) -> None:
+                            cumulative_results = dict(existing_active_results)
+                            cumulative_results.update({row.id: row for row in snapshot_results})
+                            cumulative_llm = dict(existing_active_llm)
+                            cumulative_llm.update(
+                                {
+                                    (row.id or f"{row.source_id}:{row.text}:{row.label}"): row
+                                    for row in snapshot_llm_judgments
+                                }
+                            )
+                            merged_results = replace_classify_outputs(
+                                existing_results,
+                                list(cumulative_results.values()),
+                                graph_bundle=base_graph,
+                                active_source_ids=set(process_source_ids),
+                            )
+                            merged_results = filter_classify_outputs_by_graph(merged_results, graph_bundle=base_graph)
+                            merged_llm = replace_llm_judge_details(
+                                existing_llm,
+                                list(cumulative_llm.values()),
+                                graph_bundle=base_graph,
+                                active_source_ids=set(process_source_ids),
+                            )
+                            write_classify_results(layout.classify_results_path(), merged_results)
+                            write_llm_judge_details(layout.classify_llm_judge_path(), merged_llm)
+                            llm_completed_unit_ids = sorted(
+                                set(llm_reused_unit_ids) | {row.id for row in snapshot_results}
+                            )
+                            substage_states["llm_judge"] = build_unit_substage_manifest(
+                                stage_name="llm_judge",
+                                unit_ids=llm_scope_unit_ids,
+                                unit_source_map=llm_unit_source_map,
+                                processed_unit_ids=llm_completed_unit_ids,
+                                output_unit_ids=llm_completed_unit_ids,
+                                skipped_unit_ids=llm_reused_unit_ids,
+                                stats=build_stage_work_stats(
+                                    input_source_ids=source_ids_for_unit_ids(llm_scope_unit_ids, llm_unit_source_map),
+                                    processed_source_ids=source_ids_for_unit_ids(llm_completed_unit_ids, llm_unit_source_map),
+                                    skipped_source_ids=source_ids_for_unit_ids(llm_reused_unit_ids, llm_unit_source_map),
+                                    work_units_total=len(llm_scope_unit_ids),
+                                    work_units_completed=completed_units,
+                                    work_units_skipped=len(llm_reused_unit_ids),
+                                    result_count=len(classify_active_results(merged_results)),
+                                    llm_judgment_count=len(cumulative_llm),
+                                ),
+                                status="running",
+                            )
+                            stage_record.stats = build_stage_work_stats(
+                                input_source_ids=input_source_ids,
+                                processed_source_ids=process_source_ids,
+                                skipped_source_ids=skipped_source_ids,
+                                work_units_total=len(candidate_unit_ids) + skipped_units,
+                                work_units_completed=len(model_process_candidates),
+                                work_units_skipped=skipped_units + len(model_reused_unit_ids),
+                                updated_edges=len(classify_active_results(merged_results)),
+                                candidate_count=len(candidate_unit_ids) + skipped_units,
+                                result_count=len(classify_active_results(merged_results)),
+                            )
+                            stage_record.failures = []
+                            write_stage_state(
+                                layout,
+                                build_stage_manifest(
+                                    stage_name=stage_name,
+                                    layout=layout,
+                                    job_id=job_id,
+                                    build_target=source_path_label,
+                                    source_ids=selected_source_ids,
+                                    processed_source_ids=process_source_ids,
+                                    input_stage=GRAPH_INPUT_STAGE[stage_name],
+                                    artifact_paths=stage_record.artifact_paths,
+                                    stats=stage_record.stats,
+                                    status="running",
+                                    substage_states=substage_states,
+                                ),
+                            )
+                            write_job_log(layout.job_log_path(job_id), log_record)
+
+                        llm_result = run_llm_phase(
+                            runtime=runtime,
+                            pending_records=llm_process_pending,
+                            stats=dict(model_result.stats if model_process_candidates else {}),
+                            progress_callback=offset_stage_progress_callback(
+                                stage_progress_callback,
+                                f"{stage_name}::llm",
+                                skipped_units=len(llm_reused_unit_ids),
+                                total_units=len(llm_scope_unit_ids),
+                            ),
+                            checkpoint_every=checkpoint_every,
+                            checkpoint_callback=checkpoint_classify_llm,
+                            cancel_event=cancel_event,
+                        )
+                        cumulative_results = dict(existing_active_results)
+                        cumulative_results.update({row.id: row for row in llm_result.results})
+                        cumulative_llm = dict(existing_active_llm)
+                        cumulative_llm.update(
                             {
-                                key: value
-                                for key, value in dict(snapshot_stats).items()
-                                if key not in stage_record.stats
+                                (row.id or f"{row.source_id}:{row.text}:{row.label}"): row
+                                for row in llm_result.llm_judgments
                             }
                         )
-                        write_json(
-                            layout.relation_classify_log_path(),
-                            {"status": "running", "stats": dict(stage_record.stats), "llm_errors": []},
+                        merged_results = replace_classify_outputs(
+                            existing_results,
+                            list(cumulative_results.values()),
+                            graph_bundle=base_graph,
+                            active_source_ids=set(process_source_ids),
                         )
+                        merged_results = filter_classify_outputs_by_graph(merged_results, graph_bundle=base_graph)
+                        merged_llm = replace_llm_judge_details(
+                            existing_llm,
+                            list(cumulative_llm.values()),
+                            graph_bundle=base_graph,
+                            active_source_ids=set(process_source_ids),
+                        )
+                        write_classify_results(layout.classify_results_path(), merged_results)
+                        write_llm_judge_details(layout.classify_llm_judge_path(), merged_llm)
+                        existing_results = merged_results
+                        existing_llm = merged_llm
+                        llm_completed_unit_ids = sorted(
+                            set(llm_reused_unit_ids) | {row.id for row in llm_result.results}
+                        )
+                        substage_states["llm_judge"] = build_unit_substage_manifest(
+                            stage_name="llm_judge",
+                            unit_ids=llm_scope_unit_ids,
+                            unit_source_map=llm_unit_source_map,
+                            processed_unit_ids=llm_completed_unit_ids,
+                            output_unit_ids=llm_completed_unit_ids,
+                            skipped_unit_ids=llm_reused_unit_ids,
+                            stats=build_stage_work_stats(
+                                input_source_ids=source_ids_for_unit_ids(llm_scope_unit_ids, llm_unit_source_map),
+                                processed_source_ids=source_ids_for_unit_ids(llm_completed_unit_ids, llm_unit_source_map),
+                                skipped_source_ids=source_ids_for_unit_ids(llm_reused_unit_ids, llm_unit_source_map),
+                                work_units_total=len(llm_scope_unit_ids),
+                                work_units_completed=len(llm_result.results),
+                                work_units_skipped=len(llm_reused_unit_ids),
+                                result_count=len(classify_active_results(merged_results)),
+                                llm_judgment_count=len(cumulative_llm),
+                            ),
+                            status="completed",
+                        )
+                        llm_errors = llm_result.llm_errors
+                    else:
+                        emit_prefilled_stage_progress(
+                            stage_progress_callback,
+                            f"{stage_name}::llm",
+                            current=len(llm_reused_unit_ids),
+                            total=len(llm_scope_unit_ids),
+                        )
+                        substage_states["llm_judge"] = build_unit_substage_manifest(
+                            stage_name="llm_judge",
+                            unit_ids=llm_scope_unit_ids,
+                            unit_source_map=llm_unit_source_map,
+                            processed_unit_ids=llm_reused_unit_ids,
+                            output_unit_ids=llm_reused_unit_ids,
+                            skipped_unit_ids=llm_reused_unit_ids,
+                            stats=build_stage_work_stats(
+                                input_source_ids=source_ids_for_unit_ids(llm_scope_unit_ids, llm_unit_source_map) if llm_scope_unit_ids else [],
+                                processed_source_ids=[],
+                                skipped_source_ids=source_ids_for_unit_ids(llm_reused_unit_ids, llm_unit_source_map) if llm_reused_unit_ids else [],
+                                work_units_total=len(llm_scope_unit_ids),
+                                work_units_completed=0,
+                                work_units_skipped=len(llm_reused_unit_ids),
+                                result_count=len(classify_active_results(existing_results)),
+                            ),
+                            status="completed",
+                        )
+                        llm_errors = []
+
+                    current_graph = materialize_classify_results(base_graph, existing_results)
+                    write_stage_graph(layout, stage_name, current_graph, write_nodes=False, write_edges=True)
+                    stage_record.stats = build_stage_work_stats(
+                        input_source_ids=input_source_ids,
+                        processed_source_ids=process_source_ids,
+                        skipped_source_ids=skipped_source_ids,
+                        work_units_total=len(candidate_unit_ids) + skipped_units,
+                        work_units_completed=len(model_process_candidates),
+                        work_units_skipped=skipped_units + len(model_reused_unit_ids),
+                        updated_edges=len(classify_active_results(existing_results)),
+                        candidate_count=len(candidate_unit_ids) + skipped_units,
+                        result_count=len(classify_active_results(existing_results)),
+                    )
+                    stage_record.failures = [dict(item) for item in llm_errors]
+                else:
+                    current_graph = load_graph_snapshot(layout, stage_name) if stage_outputs_exist(layout, stage_name) else GraphBundle()
+                    emit_idle_stage_progress(stage_progress_callback, stage_name)
+                    stage_record.stats = build_stage_work_stats(
+                        input_source_ids=input_source_ids,
+                        processed_source_ids=[],
+                        skipped_source_ids=skipped_source_ids,
+                        work_units_total=skipped_units,
+                        work_units_completed=0,
+                        candidate_count=count_classify_units(base_graph, candidates, set(input_source_ids)),
+                    )
+                stage_record.artifact_paths = classify_artifact_paths(layout)
+                write_stage_state(
+                    layout,
+                    build_stage_manifest(
+                        stage_name=stage_name,
+                        layout=layout,
+                        job_id=job_id,
+                        build_target=source_path_label,
+                        source_ids=selected_source_ids,
+                        processed_source_ids=process_source_ids,
+                        input_stage=GRAPH_INPUT_STAGE[stage_name],
+                        artifact_paths=stage_record.artifact_paths,
+                        stats=stage_record.stats,
+                        graph_bundle=current_graph,
+                        substage_states=substage_states,
+                    ),
+                )
+            elif stage_name == "extract":
+                input_source_ids = resolve_stage_source_ids(layout, stage_name, selected_source_ids)
+                base_graph = load_graph_snapshot(layout, GRAPH_INPUT_STAGE[stage_name])
+                checkpoint_every = runtime.stage_checkpoint_every(stage_name)
+                existing_inputs = (
+                    read_extract_inputs(layout.extract_inputs_path())
+                    if layout.extract_inputs_path().exists()
+                    else []
+                )
+                existing_concepts = (
+                    read_extract_concepts(layout.extract_concepts_path())
+                    if layout.extract_concepts_path().exists()
+                    else []
+                )
+                substage_states: dict[str, SubstageStateManifest] = {}
+                filtered_source_ids = filter_extract_source_ids(
+                    base_graph,
+                    active_source_ids=set(input_source_ids),
+                )
+                stage_record.artifact_paths = extract_artifact_paths(layout)
+                write_stage_state(
+                    layout,
+                    build_stage_manifest(
+                        stage_name=stage_name,
+                        layout=layout,
+                        job_id=job_id,
+                        build_target=source_path_label,
+                        source_ids=selected_source_ids,
+                        processed_source_ids=[],
+                        input_stage=GRAPH_INPUT_STAGE[stage_name],
+                        artifact_paths=stage_record.artifact_paths,
+                        stats={},
+                        status="running",
+                        substage_states=substage_states,
+                    ),
+                )
+
+                aggregate_source_ids = filtered_source_ids
+                aggregate_skipped_source_ids = reusable_substage_unit_ids(
+                    layout,
+                    stage_name,
+                    "aggregate",
+                    aggregate_source_ids,
+                    force_rebuild=force_rebuild,
+                )
+                aggregate_process_source_ids = subtract_source_ids(aggregate_source_ids, aggregate_skipped_source_ids)
+                if aggregate_process_source_ids:
+                    def checkpoint_aggregate(
+                        snapshot_inputs: list,
+                        processed_checkpoint_source_ids: list[str],
+                    ) -> None:
+                        merged_inputs = replace_extract_inputs(
+                            existing_inputs,
+                            snapshot_inputs,
+                            graph_bundle=base_graph,
+                            active_source_ids=set(aggregate_process_source_ids),
+                        )
+                        write_extract_inputs(layout.extract_inputs_path(), merged_inputs)
+                        aggregate_scope_inputs = select_extract_inputs(
+                            merged_inputs,
+                            graph_bundle=base_graph,
+                            active_source_ids=set(aggregate_source_ids),
+                        )
+                        aggregate_output_unit_ids = [row.id for row in aggregate_scope_inputs]
+                        aggregate_checkpoint_source_map = build_unit_source_map(
+                            {source_id: source_id for source_id in aggregate_source_ids}
+                            | {row.id: source_id_from_node_id(row.id) for row in aggregate_scope_inputs}
+                        )
+                        substage_states["aggregate"] = build_unit_substage_manifest(
+                            stage_name="aggregate",
+                            unit_ids=aggregate_source_ids,
+                            unit_source_map=aggregate_checkpoint_source_map,
+                            processed_unit_ids=sorted(
+                                set(aggregate_skipped_source_ids) | set(processed_checkpoint_source_ids)
+                            ),
+                            output_unit_ids=aggregate_output_unit_ids,
+                            skipped_unit_ids=aggregate_skipped_source_ids,
+                            stats=build_stage_work_stats(
+                                input_source_ids=aggregate_source_ids,
+                                processed_source_ids=processed_checkpoint_source_ids,
+                                skipped_source_ids=aggregate_skipped_source_ids,
+                                work_units_total=len(aggregate_source_ids),
+                                work_units_completed=len(processed_checkpoint_source_ids),
+                                work_units_skipped=len(aggregate_skipped_source_ids),
+                                input_count=len(aggregate_scope_inputs),
+                                output_unit_count=len(aggregate_scope_inputs),
+                                output_source_count=len({source_id_from_node_id(row.id) for row in aggregate_scope_inputs}),
+                            ),
+                            status="running",
+                        )
+                        write_stage_state(
+                            layout,
+                            build_stage_manifest(
+                                stage_name=stage_name,
+                                layout=layout,
+                                job_id=job_id,
+                                build_target=source_path_label,
+                                source_ids=selected_source_ids,
+                                processed_source_ids=[],
+                                input_stage=GRAPH_INPUT_STAGE[stage_name],
+                                artifact_paths=stage_record.artifact_paths,
+                                stats={},
+                                status="running",
+                                substage_states=substage_states,
+                            ),
+                        )
+
+                    aggregated_inputs = build_extract_inputs(
+                        base_graph,
+                        active_source_ids=set(aggregate_process_source_ids),
+                        progress_callback=offset_stage_progress_callback(
+                            stage_progress_callback,
+                            f"{stage_name}::aggregate",
+                            skipped_units=len(aggregate_skipped_source_ids),
+                            total_units=len(aggregate_source_ids),
+                        ),
+                        checkpoint_every=checkpoint_every,
+                        checkpoint_callback=checkpoint_aggregate,
+                    )
+                    merged_inputs = replace_extract_inputs(
+                        existing_inputs,
+                        aggregated_inputs,
+                        graph_bundle=base_graph,
+                        active_source_ids=set(aggregate_process_source_ids),
+                    )
+                    write_extract_inputs(layout.extract_inputs_path(), merged_inputs)
+                    existing_inputs = merged_inputs
+                else:
+                    emit_prefilled_stage_progress(
+                        stage_progress_callback,
+                        f"{stage_name}::aggregate",
+                        current=len(aggregate_skipped_source_ids),
+                        total=len(aggregate_source_ids),
+                    )
+                aggregated_scope_inputs = select_extract_inputs(
+                    existing_inputs,
+                    graph_bundle=base_graph,
+                    active_source_ids=set(aggregate_source_ids),
+                )
+                aggregate_processed_source_ids = sorted(set(aggregate_skipped_source_ids) | set(aggregate_process_source_ids))
+                aggregate_output_unit_ids = [row.id for row in aggregated_scope_inputs]
+                aggregate_unit_source_map = build_unit_source_map(
+                    {source_id: source_id for source_id in aggregate_source_ids}
+                    | {row.id: source_id_from_node_id(row.id) for row in aggregated_scope_inputs}
+                )
+                substage_states["aggregate"] = build_unit_substage_manifest(
+                    stage_name="aggregate",
+                    unit_ids=aggregate_source_ids,
+                    unit_source_map=aggregate_unit_source_map,
+                    processed_unit_ids=aggregate_processed_source_ids,
+                    output_unit_ids=aggregate_output_unit_ids,
+                    skipped_unit_ids=aggregate_skipped_source_ids,
+                    stats=build_stage_work_stats(
+                        input_source_ids=aggregate_source_ids,
+                        processed_source_ids=aggregate_process_source_ids,
+                        skipped_source_ids=aggregate_skipped_source_ids,
+                        work_units_total=len(aggregate_source_ids),
+                        work_units_completed=len(aggregate_process_source_ids),
+                        work_units_skipped=len(aggregate_skipped_source_ids),
+                        input_count=len(aggregated_scope_inputs),
+                        output_unit_count=len(aggregated_scope_inputs),
+                        output_source_count=len({source_id_from_node_id(row.id) for row in aggregated_scope_inputs}),
+                    ),
+                    status="completed",
+                )
+                write_stage_state(
+                    layout,
+                    build_stage_manifest(
+                        stage_name=stage_name,
+                        layout=layout,
+                        job_id=job_id,
+                        build_target=source_path_label,
+                        source_ids=selected_source_ids,
+                        processed_source_ids=[],
+                        input_stage=GRAPH_INPUT_STAGE[stage_name],
+                        artifact_paths=stage_record.artifact_paths,
+                        stats={},
+                        status="running",
+                        substage_states=substage_states,
+                    ),
+                )
+
+                extract_scope_inputs = list(aggregated_scope_inputs)
+                extract_scope_input_ids = [row.id for row in extract_scope_inputs]
+                extract_scope_source_ids = sorted({source_id_from_node_id(row.id) for row in extract_scope_inputs})
+                extract_completed_input_ids = reusable_substage_unit_ids(
+                    layout,
+                    stage_name,
+                    "extract",
+                    extract_scope_input_ids,
+                    force_rebuild=force_rebuild,
+                )
+                extract_skipped_inputs = [
+                    row for row in extract_scope_inputs if row.id in set(extract_completed_input_ids)
+                ]
+                extract_total_units = len(extract_scope_inputs)
+                extract_skipped_units = len(extract_skipped_inputs)
+                extract_process_inputs = [
+                    row for row in extract_scope_inputs if row.id not in set(extract_completed_input_ids)
+                ]
+                extract_process_source_ids = sorted(
+                    {source_id_from_node_id(row.id) for row in extract_process_inputs}
+                )
+                extract_skipped_source_ids = completed_extract_source_ids(
+                    extract_scope_inputs,
+                    extract_completed_input_ids,
+                )
+                extract_scope_concepts = select_extract_concepts(
+                    existing_concepts,
+                    graph_bundle=base_graph,
+                    active_source_ids=set(extract_scope_source_ids),
+                )
+                if extract_process_inputs:
+                    active_extract_source_ids = set(extract_process_source_ids)
+                    prepared_inputs = list(extract_process_inputs)
+                    emit_prefilled_stage_progress(
+                        stage_progress_callback,
+                        f"{stage_name}::extract",
+                        current=extract_skipped_units,
+                        total=extract_total_units,
+                    )
+                    stage_record.artifact_paths = extract_artifact_paths(layout)
+                    stage_record.stats = build_stage_work_stats(
+                        input_source_ids=extract_scope_source_ids,
+                        processed_source_ids=[],
+                        skipped_source_ids=extract_skipped_source_ids,
+                        work_units_total=extract_total_units,
+                        work_units_completed=0,
+                        work_units_skipped=extract_skipped_units,
+                        input_count=len(prepared_inputs),
+                        result_count=len(extract_scope_concepts),
+                        concept_count=sum(len(row.concepts) for row in extract_scope_concepts),
+                        llm_request_count=0,
+                        llm_error_count=0,
+                        retry_count=0,
+                    )
+                    extract_manifest_source_map = (
+                        build_unit_source_map(
+                            {unit_id: source_id_from_node_id(unit_id) for unit_id in extract_scope_input_ids}
+                        )
+                        if extract_scope_input_ids
+                        else {}
+                    )
+                    substage_states["extract"] = build_unit_substage_manifest(
+                        stage_name="extract",
+                        unit_ids=extract_scope_input_ids,
+                        unit_source_map=extract_manifest_source_map,
+                        processed_unit_ids=extract_completed_input_ids,
+                        output_unit_ids=extract_completed_input_ids,
+                        skipped_unit_ids=extract_completed_input_ids,
+                        stats=dict(stage_record.stats),
+                        status="running",
+                    )
+                    stage_record.failures = []
+                    write_stage_state(
+                        layout,
+                        build_stage_manifest(
+                            stage_name=stage_name,
+                            layout=layout,
+                            job_id=job_id,
+                            build_target=source_path_label,
+                            source_ids=selected_source_ids,
+                            processed_source_ids=[],
+                            input_stage=GRAPH_INPUT_STAGE[stage_name],
+                            artifact_paths=stage_record.artifact_paths,
+                            stats=stage_record.stats,
+                            status="running",
+                            substage_states=substage_states,
+                        ),
+                    )
+                    write_job_log(layout.job_log_path(job_id), log_record)
+
+                    def checkpoint_extract(
+                        snapshot_concepts: list,
+                        snapshot_stats: dict[str, int],
+                        processed_checkpoint_source_ids: list[str],
+                        processed_checkpoint_input_ids: list[str],
+                        successful_checkpoint_input_ids: list[str],
+                        llm_error_summary: list[dict[str, object]],
+                    ) -> None:
+                        merged_concepts = replace_extract_concepts(
+                            existing_concepts,
+                            snapshot_concepts,
+                            graph_bundle=base_graph,
+                            active_source_ids=active_extract_source_ids,
+                        )
+                        write_extract_concepts(layout.extract_concepts_path(), merged_concepts)
+                        checkpoint_completed_input_ids = sorted(
+                            set(extract_completed_input_ids) | set(processed_checkpoint_input_ids)
+                        )
+                        checkpoint_source_map = (
+                            build_unit_source_map(
+                                {unit_id: source_id_from_node_id(unit_id) for unit_id in extract_scope_input_ids}
+                            )
+                            if extract_scope_input_ids
+                            else {}
+                        )
+                        stage_record.artifact_paths = extract_artifact_paths(layout)
+                        stage_record.stats = finalize_stage_work_stats(
+                            dict(snapshot_stats),
+                            processed_source_ids=processed_checkpoint_source_ids,
+                            skipped_source_ids=extract_skipped_source_ids,
+                            skipped_work_units=extract_skipped_units,
+                        )
+                        substage_states["extract"] = build_unit_substage_manifest(
+                            stage_name="extract",
+                            unit_ids=extract_scope_input_ids,
+                            unit_source_map=checkpoint_source_map,
+                            processed_unit_ids=checkpoint_completed_input_ids,
+                            output_unit_ids=successful_checkpoint_input_ids,
+                            skipped_unit_ids=extract_completed_input_ids,
+                            stats=dict(stage_record.stats),
+                            status="running",
+                        )
+                        stage_record.failures = [dict(item) for item in llm_error_summary]
                         write_stage_state(
                             layout,
                             build_stage_manifest(
@@ -592,70 +1338,98 @@ def _build_from_source_ids(
                                 input_stage=GRAPH_INPUT_STAGE[stage_name],
                                 artifact_paths=stage_record.artifact_paths,
                                 stats=stage_record.stats,
-                                graph_bundle=checkpoint_graph,
                                 status="running",
+                                substage_states=substage_states,
                             ),
                         )
                         write_job_log(layout.job_log_path(job_id), log_record)
 
-                    result = run_relation_classify(
+                    result = run_extract(
                         base_graph,
                         runtime,
-                        candidates,
-                        source_document_ids=set(process_source_ids),
-                        model_progress_callback=lambda current, total_items: emit_stage_progress(
-                            stage_progress_callback, f"{stage_name}::model", current, total_items
-                        ),
-                        llm_progress_callback=lambda current, total_items: emit_stage_progress(
-                            stage_progress_callback, f"{stage_name}::llm", current, total_items
+                        inputs=prepared_inputs,
+                        active_source_ids=active_extract_source_ids,
+                        progress_callback=offset_stage_progress_callback(
+                            stage_progress_callback,
+                            f"{stage_name}::extract",
+                            skipped_units=extract_skipped_units,
+                            total_units=extract_total_units,
                         ),
                         checkpoint_every=checkpoint_every,
-                        checkpoint_callback=checkpoint_relation_classify,
+                        checkpoint_callback=checkpoint_extract,
                         cancel_event=cancel_event,
                     )
-                    merged_results = replace_relation_classify_outputs(
-                        existing_results,
-                        result.results,
+                    merged_concepts = replace_extract_concepts(
+                        existing_concepts,
+                        result.concepts,
                         graph_bundle=base_graph,
-                        active_source_ids=set(process_source_ids),
+                        active_source_ids=active_extract_source_ids,
                     )
-                    merged_results = filter_relation_classify_outputs_by_graph(
-                        merged_results,
-                        graph_bundle=base_graph,
-                    )
-                    merged_llm = replace_llm_judge_details(
-                        existing_llm,
-                        result.llm_judgments,
-                        graph_bundle=base_graph,
-                        active_source_ids=set(process_source_ids),
-                    )
-                    write_relation_plans(layout.relation_classify_plans_path(), merged_results)
-                    write_llm_judge_details(layout.relation_classify_llm_judge_path(), merged_llm)
-                    current_graph = materialize_relation_plans(base_graph, merged_results)
-                    write_stage_graph(layout, stage_name, current_graph, write_nodes=False, write_edges=True)
+                    write_extract_concepts(layout.extract_concepts_path(), merged_concepts)
                     stage_record.stats = finalize_stage_work_stats(
                         dict(result.stats),
-                        processed_source_ids=process_source_ids,
-                        skipped_source_ids=skipped_source_ids,
-                        skipped_work_units=skipped_units,
-                        updated_edges=int(result.stats.get("result_count", 0)),
+                        processed_source_ids=result.processed_source_ids,
+                        skipped_source_ids=extract_skipped_source_ids,
+                        skipped_work_units=extract_skipped_units,
                     )
-                    write_json(
-                        layout.relation_classify_log_path(),
-                        {"stats": dict(stage_record.stats), "llm_errors": result.llm_errors},
+                    stage_record.failures = [dict(item) for item in result.llm_errors]
+                    processed_source_ids = result.processed_source_ids
+                    final_completed_input_ids = sorted(set(extract_completed_input_ids) | set(result.processed_input_ids))
+                    final_successful_input_ids = sorted(set(extract_completed_input_ids) | set(result.successful_input_ids))
+                    final_source_map = (
+                        build_unit_source_map(
+                            {unit_id: source_id_from_node_id(unit_id) for unit_id in extract_scope_input_ids}
+                        )
+                        if extract_scope_input_ids
+                        else {}
+                    )
+                    substage_states["extract"] = build_unit_substage_manifest(
+                        stage_name="extract",
+                        unit_ids=extract_scope_input_ids,
+                        unit_source_map=final_source_map,
+                        processed_unit_ids=final_completed_input_ids,
+                        output_unit_ids=final_successful_input_ids,
+                        skipped_unit_ids=extract_completed_input_ids,
+                        stats=dict(stage_record.stats),
+                        status="completed",
                     )
                 else:
-                    current_graph = load_graph_snapshot(layout, stage_name) if stage_outputs_exist(layout, stage_name) else GraphBundle()
-                    emit_idle_stage_progress(stage_progress_callback, stage_name)
-                    stage_record.stats = build_stage_work_stats(
-                        input_source_ids=input_source_ids,
-                        processed_source_ids=[],
-                        skipped_source_ids=skipped_source_ids,
-                        work_units_total=skipped_units,
-                        work_units_completed=0,
-                        candidate_count=count_relation_classify_units(base_graph, candidates, set(input_source_ids)),
+                    emit_prefilled_stage_progress(
+                        stage_progress_callback,
+                        f"{stage_name}::extract",
+                        current=extract_skipped_units,
+                        total=extract_total_units,
                     )
-                stage_record.artifact_paths = relation_artifact_paths(layout)
+                    stage_record.stats = build_stage_work_stats(
+                        input_source_ids=extract_scope_source_ids,
+                        processed_source_ids=[],
+                        skipped_source_ids=extract_skipped_source_ids,
+                        work_units_total=extract_total_units,
+                        work_units_completed=0,
+                        work_units_skipped=extract_skipped_units,
+                        input_count=len(extract_scope_inputs),
+                        result_count=len(extract_scope_concepts),
+                        concept_count=sum(len(row.concepts) for row in extract_scope_concepts),
+                    )
+                    processed_source_ids = []
+                    extract_manifest_source_map = (
+                        build_unit_source_map(
+                            {unit_id: source_id_from_node_id(unit_id) for unit_id in extract_scope_input_ids}
+                        )
+                        if extract_scope_input_ids
+                        else {}
+                    )
+                    substage_states["extract"] = build_unit_substage_manifest(
+                        stage_name="extract",
+                        unit_ids=extract_scope_input_ids,
+                        unit_source_map=extract_manifest_source_map,
+                        processed_unit_ids=extract_completed_input_ids,
+                        output_unit_ids=extract_completed_input_ids,
+                        skipped_unit_ids=extract_completed_input_ids,
+                        stats=dict(stage_record.stats),
+                        status="completed",
+                    )
+                stage_record.artifact_paths = extract_artifact_paths(layout)
                 write_stage_state(
                     layout,
                     build_stage_manifest(
@@ -664,42 +1438,149 @@ def _build_from_source_ids(
                         job_id=job_id,
                         build_target=source_path_label,
                         source_ids=selected_source_ids,
-                        processed_source_ids=process_source_ids,
+                        processed_source_ids=processed_source_ids,
                         input_stage=GRAPH_INPUT_STAGE[stage_name],
                         artifact_paths=stage_record.artifact_paths,
                         stats=stage_record.stats,
-                        graph_bundle=current_graph,
+                        substage_states=substage_states,
                     ),
                 )
-            elif stage_name == "entity_extraction":
+            elif stage_name == "embed":
                 input_source_ids = resolve_stage_source_ids(layout, stage_name, selected_source_ids)
-                current_graph = run_graph_stage(
-                    stage_name,
-                    layout,
-                    runtime,
-                    input_source_ids,
-                    stage_progress_callback,
-                    force_rebuild=force_rebuild,
+                base_graph = load_graph_snapshot(layout, GRAPH_INPUT_STAGE[stage_name])
+                scoped_extract_concepts = (
+                    select_extract_concepts(
+                        read_extract_concepts(layout.extract_concepts_path()) if layout.extract_concepts_path().exists() else [],
+                        graph_bundle=base_graph,
+                        active_source_ids=set(input_source_ids),
+                    )
+                    if input_source_ids
+                    else []
                 )
-                write_stage_graph(layout, stage_name, current_graph, write_nodes=True, write_edges=True)
-                stage_record.artifact_paths = graph_artifact_paths(layout, stage_name)
-                stage_record.stats = build_graph_stage_stats(current_graph, input_source_ids)
-                write_stage_state(
-                    layout,
-                    build_stage_manifest(
-                        stage_name=stage_name,
-                        layout=layout,
-                        job_id=job_id,
-                        build_target=source_path_label,
-                        source_ids=selected_source_ids,
-                        processed_source_ids=input_source_ids,
-                        input_stage=GRAPH_INPUT_STAGE[stage_name],
-                        artifact_paths=stage_record.artifact_paths,
-                        stats=stage_record.stats,
-                        graph_bundle=current_graph,
-                    ),
-                )
-            elif stage_name == "entity_alignment":
+                if (
+                    can_reuse_stage(
+                        layout,
+                        stage_name,
+                        input_source_ids,
+                        force_rebuild=force_rebuild,
+                    )
+                    and layout.embed_concepts_path().exists()
+                    and layout.embed_vectors_path().exists()
+                ):
+                    emit_idle_stage_progress(stage_progress_callback, stage_name)
+                    embed_runtime_config = resolve_embed_runtime_config(runtime)
+                    existing_vectors = read_concept_vectors(layout.embed_vectors_path())
+                    stage_record.stats = build_embed_stats(
+                        input_source_ids,
+                        len(scoped_extract_concepts),
+                        len(existing_vectors),
+                        provider=embed_runtime_config.provider,
+                        model=embed_runtime_config.model,
+                        backend="provider",
+                        vector_dimension=len(existing_vectors[0].vector) if existing_vectors else 0,
+                    )
+                else:
+                    checkpoint_every = runtime.stage_checkpoint_every(stage_name)
+
+                    def checkpoint_embed(
+                        snapshot_concepts: list,
+                        snapshot_vectors: list,
+                        snapshot_stats: dict[str, int],
+                        processed_checkpoint_source_ids: list[str],
+                        processed_checkpoint_concept_ids: list[str],
+                    ) -> None:
+                        write_embedded_concepts(layout.embed_concepts_path(), snapshot_concepts)
+                        write_concept_vectors(layout.embed_vectors_path(), snapshot_vectors)
+                        concept_source_map = (
+                            build_unit_source_map(
+                                {
+                                    row.id: source_id_from_node_id(row.source_node_id)
+                                    for row in snapshot_concepts
+                                }
+                            )
+                            if snapshot_concepts
+                            else {}
+                        )
+                        substage_states = {}
+                        if concept_source_map:
+                            substage_states["embed"] = build_unit_substage_manifest(
+                                stage_name="embed",
+                                unit_ids=[row.id for row in snapshot_concepts],
+                                unit_source_map=concept_source_map,
+                                processed_unit_ids=processed_checkpoint_concept_ids,
+                                output_unit_ids=processed_checkpoint_concept_ids,
+                                skipped_unit_ids=[],
+                                stats=dict(snapshot_stats),
+                                status="running",
+                            )
+                        write_stage_state(
+                            layout,
+                            build_stage_manifest(
+                                stage_name=stage_name,
+                                layout=layout,
+                                job_id=job_id,
+                                build_target=source_path_label,
+                                source_ids=selected_source_ids,
+                                processed_source_ids=processed_checkpoint_source_ids,
+                                input_stage=GRAPH_INPUT_STAGE[stage_name],
+                                artifact_paths=embed_artifact_paths(layout),
+                                stats=snapshot_stats,
+                                status="running",
+                                substage_states=substage_states,
+                            ),
+                        )
+
+                    embed_result = run_embed(
+                        scoped_extract_concepts,
+                        runtime,
+                        progress_callback=lambda current, total_items: emit_stage_progress(
+                            stage_progress_callback, stage_name, current, total_items
+                        ),
+                        checkpoint_every=checkpoint_every,
+                        checkpoint_callback=checkpoint_embed,
+                    )
+                    write_embedded_concepts(layout.embed_concepts_path(), embed_result.concepts)
+                    write_concept_vectors(layout.embed_vectors_path(), embed_result.vectors)
+                    stage_record.stats = dict(embed_result.stats)
+                    substage_states = {}
+                    concept_source_map = (
+                        build_unit_source_map(
+                            {
+                                row.id: source_id_from_node_id(row.source_node_id)
+                                for row in embed_result.concepts
+                            }
+                        )
+                        if embed_result.concepts
+                        else {}
+                    )
+                    if concept_source_map:
+                        substage_states["embed"] = build_unit_substage_manifest(
+                            stage_name="embed",
+                            unit_ids=[row.id for row in embed_result.concepts],
+                            unit_source_map=concept_source_map,
+                            processed_unit_ids=embed_result.processed_concept_ids,
+                            output_unit_ids=embed_result.processed_concept_ids,
+                            skipped_unit_ids=[],
+                            stats=dict(stage_record.stats),
+                            status="completed",
+                        )
+                    write_stage_state(
+                        layout,
+                        build_stage_manifest(
+                            stage_name=stage_name,
+                            layout=layout,
+                            job_id=job_id,
+                            build_target=source_path_label,
+                            source_ids=selected_source_ids,
+                            processed_source_ids=embed_result.processed_source_ids,
+                            input_stage=GRAPH_INPUT_STAGE[stage_name],
+                            artifact_paths=embed_artifact_paths(layout),
+                            stats=stage_record.stats,
+                            substage_states=substage_states,
+                        ),
+                    )
+                stage_record.artifact_paths = embed_artifact_paths(layout)
+            elif stage_name == "align":
                 input_source_ids = resolve_stage_source_ids(layout, stage_name, selected_source_ids)
                 if can_reuse_stage(
                     layout,
@@ -708,38 +1589,269 @@ def _build_from_source_ids(
                     require_nodes=True,
                     require_edges=True,
                     force_rebuild=force_rebuild,
-                ):
+                ) and layout.align_pairs_path().exists():
                     current_graph = load_graph_snapshot(layout, stage_name)
                     emit_idle_stage_progress(stage_progress_callback, stage_name)
+                    stage_record.stats = build_graph_stage_stats(current_graph, input_source_ids)
                 else:
                     base_graph = load_graph_snapshot(layout, GRAPH_INPUT_STAGE[stage_name])
-                    current_graph = run_entity_alignment(
-                        base_graph,
+                    all_embedded_concepts = read_embedded_concepts(layout.embed_concepts_path()) if layout.embed_concepts_path().exists() else []
+                    all_vectors = read_concept_vectors(layout.embed_vectors_path()) if layout.embed_vectors_path().exists() else []
+                    embedded_concepts = [
+                        row
+                        for row in all_embedded_concepts
+                        if source_id_from_node_id(row.source_node_id) in set(input_source_ids)
+                    ]
+                    embedded_concept_ids = {row.id for row in embedded_concepts}
+                    concept_vectors = [row for row in all_vectors if row.id in embedded_concept_ids]
+                    concept_source_map = build_unit_source_map(
+                        {
+                            row.id: source_id_from_node_id(row.source_node_id)
+                            for row in embedded_concepts
+                        }
+                    )
+                    pair_checkpoint_every = runtime.substage_checkpoint_every(stage_name, "pair")
+                    pair_progress = offset_stage_progress_callback(
+                        stage_progress_callback,
+                        f"{stage_name}::pair",
+                        skipped_units=0,
+                        total_units=max(len(embedded_concepts), 1),
+                    )
+
+                    substage_states: dict[str, SubstageStateManifest] = {}
+
+                    def checkpoint_align_pair(
+                        snapshot_pairs: list,
+                        snapshot_stats: dict[str, int],
+                        processed_checkpoint_concept_ids: list[str],
+                    ) -> None:
+                        write_align_pairs(layout.align_pairs_path(), snapshot_pairs)
+                        if concept_source_map:
+                            substage_states["pair"] = build_unit_substage_manifest(
+                                stage_name="pair",
+                                unit_ids=[row.id for row in embedded_concepts],
+                                unit_source_map=concept_source_map,
+                                processed_unit_ids=processed_checkpoint_concept_ids,
+                                output_unit_ids=processed_checkpoint_concept_ids,
+                                skipped_unit_ids=[],
+                                stats=dict(snapshot_stats),
+                                status="running",
+                            )
+                        write_stage_state(
+                            layout,
+                            build_stage_manifest(
+                                stage_name=stage_name,
+                                layout=layout,
+                                job_id=job_id,
+                                build_target=source_path_label,
+                                source_ids=selected_source_ids,
+                                processed_source_ids=source_ids_for_unit_ids(processed_checkpoint_concept_ids, concept_source_map)
+                                if concept_source_map and processed_checkpoint_concept_ids
+                                else [],
+                                input_stage=GRAPH_INPUT_STAGE[stage_name],
+                                artifact_paths=align_artifact_paths(layout),
+                                stats=dict(snapshot_stats),
+                                status="running",
+                                substage_states=substage_states,
+                            ),
+                        )
+
+                    pairs = build_pairs(
+                        embedded_concepts,
+                        concept_vectors,
                         runtime,
-                        active_source_ids=set(input_source_ids) if input_source_ids else None,
-                        progress_callback=lambda current, total_items: emit_stage_progress(
-                            stage_progress_callback, stage_name, current, total_items
+                        progress_callback=pair_progress,
+                        checkpoint_every=pair_checkpoint_every,
+                        checkpoint_callback=checkpoint_align_pair,
+                    )
+                    write_align_pairs(layout.align_pairs_path(), pairs)
+                    if concept_source_map:
+                        substage_states["pair"] = build_unit_substage_manifest(
+                            stage_name="pair",
+                            unit_ids=[row.id for row in embedded_concepts],
+                            unit_source_map=concept_source_map,
+                            processed_unit_ids=[row.id for row in embedded_concepts],
+                            output_unit_ids=[row.id for row in embedded_concepts],
+                            skipped_unit_ids=[],
+                            stats=build_pair_stats(len(embedded_concepts), len(embedded_concepts), pairs),
+                            status="completed",
+                        )
+
+                    pending_pairs = [row for row in pairs if row.relation == "pending"]
+                    classify_pair_ids = [f"{row.left_id}|{row.right_id}" for row in pending_pairs]
+                    classify_source_map = (
+                        build_unit_source_map(
+                            {
+                                f"{row.left_id}|{row.right_id}": source_id_from_node_id(
+                                    next(item.source_node_id for item in embedded_concepts if item.id == row.left_id)
+                                )
+                                for row in pending_pairs
+                            }
+                        )
+                        if pending_pairs
+                        else {}
+                    )
+                    classify_checkpoint_every = runtime.substage_checkpoint_every(stage_name, "classify")
+
+                    def checkpoint_align_classify(
+                        snapshot_pairs: list,
+                        snapshot_stats: dict[str, int],
+                        processed_checkpoint_pair_ids: list[str],
+                        llm_error_summary: list[dict[str, Any]],
+                    ) -> None:
+                        del llm_error_summary
+                        write_align_pairs(layout.align_pairs_path(), snapshot_pairs)
+                        if classify_source_map:
+                            substage_states["classify"] = build_unit_substage_manifest(
+                                stage_name="classify",
+                                unit_ids=classify_pair_ids,
+                                unit_source_map=classify_source_map,
+                                processed_unit_ids=processed_checkpoint_pair_ids,
+                                output_unit_ids=processed_checkpoint_pair_ids,
+                                skipped_unit_ids=[],
+                                stats=dict(snapshot_stats),
+                                status="running",
+                            )
+                        write_stage_state(
+                            layout,
+                            build_stage_manifest(
+                                stage_name=stage_name,
+                                layout=layout,
+                                job_id=job_id,
+                                build_target=source_path_label,
+                                source_ids=selected_source_ids,
+                                processed_source_ids=[],
+                                input_stage=GRAPH_INPUT_STAGE[stage_name],
+                                artifact_paths=align_artifact_paths(layout),
+                                stats=dict(snapshot_stats),
+                                status="running",
+                                substage_states=substage_states,
+                            ),
+                        )
+
+                    classify_result = classify_pairs(
+                        pairs,
+                        runtime,
+                        progress_callback=offset_stage_progress_callback(
+                            stage_progress_callback,
+                            f"{stage_name}::classify",
+                            skipped_units=0,
+                            total_units=max(len(pending_pairs), 1),
+                        ),
+                        checkpoint_every=classify_checkpoint_every,
+                        checkpoint_callback=checkpoint_align_classify,
+                        cancel_event=cancel_event,
+                    )
+                    pairs = classify_result.pairs
+                    write_align_pairs(layout.align_pairs_path(), pairs)
+                    if classify_source_map:
+                        substage_states["classify"] = build_unit_substage_manifest(
+                            stage_name="classify",
+                            unit_ids=classify_pair_ids,
+                            unit_source_map=classify_source_map,
+                            processed_unit_ids=classify_result.processed_pair_ids,
+                            output_unit_ids=classify_result.processed_pair_ids,
+                            skipped_unit_ids=[],
+                            stats=dict(classify_result.stats),
+                            status="completed",
+                        )
+                    resolve_checkpoint_every = runtime.substage_checkpoint_every(stage_name, "resolve")
+                    emit_stage_progress(stage_progress_callback, f"{stage_name}::resolve", 0, 1)
+                    if resolve_checkpoint_every > 0:
+                        substage_states["resolve"] = build_unit_substage_manifest(
+                            stage_name="resolve",
+                            unit_ids=input_source_ids or ["resolve"],
+                            unit_source_map=build_unit_source_map(
+                                {
+                                    unit_id: source_id_from_node_id(f"document:{unit_id}")
+                                    for unit_id in (input_source_ids or ["resolve"])
+                                }
+                            ),
+                            processed_unit_ids=[],
+                            output_unit_ids=[],
+                            skipped_unit_ids=[],
+                            stats={"input_count": len(input_source_ids)},
+                            status="running",
+                        )
+                        write_stage_state(
+                            layout,
+                            build_stage_manifest(
+                                stage_name=stage_name,
+                                layout=layout,
+                                job_id=job_id,
+                                build_target=source_path_label,
+                                source_ids=selected_source_ids,
+                                processed_source_ids=input_source_ids,
+                                input_stage=GRAPH_INPUT_STAGE[stage_name],
+                                artifact_paths=align_artifact_paths(layout),
+                                stats=stage_record.stats,
+                                substage_states=substage_states,
+                                status="running",
+                            ),
+                        )
+                    resolve_result = resolve_align_pairs(base_graph, embedded_concepts, pairs)
+                    current_graph = resolve_result.graph_bundle
+                    write_stage_graph(layout, stage_name, current_graph, write_nodes=True, write_edges=True)
+                    substage_states["resolve"] = build_unit_substage_manifest(
+                        stage_name="resolve",
+                        unit_ids=input_source_ids or ["resolve"],
+                        unit_source_map=build_unit_source_map(
+                            {
+                                unit_id: source_id_from_node_id(f"document:{unit_id}")
+                                for unit_id in (input_source_ids or ["resolve"])
+                            }
+                        ),
+                        processed_unit_ids=input_source_ids or ["resolve"],
+                        output_unit_ids=input_source_ids or ["resolve"],
+                        skipped_unit_ids=[],
+                        stats=dict(resolve_result.stats),
+                        status="completed",
+                    )
+                    emit_stage_progress(stage_progress_callback, f"{stage_name}::resolve", 1, 1)
+                    stage_record.stats = build_graph_stage_stats(current_graph, input_source_ids)
+                    stage_record.stats.update(
+                        {
+                            "pair_count": len(pairs),
+                            "equivalent_count": sum(1 for row in pairs if row.relation == "equivalent"),
+                            "related_count": sum(1 for row in pairs if row.relation == "related"),
+                            "ignored_pair_count": sum(1 for row in pairs if row.relation == "ignore"),
+                        }
+                    )
+                    write_stage_state(
+                        layout,
+                        build_stage_manifest(
+                            stage_name=stage_name,
+                            layout=layout,
+                            job_id=job_id,
+                            build_target=source_path_label,
+                            source_ids=selected_source_ids,
+                            processed_source_ids=input_source_ids,
+                            input_stage=GRAPH_INPUT_STAGE[stage_name],
+                            artifact_paths=align_artifact_paths(layout),
+                            stats=stage_record.stats,
+                            graph_bundle=current_graph,
+                            substage_states=substage_states,
                         ),
                     )
-                    write_stage_graph(layout, stage_name, current_graph, write_nodes=True, write_edges=True)
                 stage_record.artifact_paths = graph_artifact_paths(layout, stage_name)
-                stage_record.stats = build_graph_stage_stats(current_graph, input_source_ids)
-                write_stage_state(
-                    layout,
-                    build_stage_manifest(
-                        stage_name=stage_name,
-                        layout=layout,
-                        job_id=job_id,
-                        build_target=source_path_label,
-                        source_ids=selected_source_ids,
-                        processed_source_ids=input_source_ids,
-                        input_stage=GRAPH_INPUT_STAGE[stage_name],
-                        artifact_paths=stage_record.artifact_paths,
-                        stats=stage_record.stats,
-                        graph_bundle=current_graph,
-                    ),
-                )
-            elif stage_name == "implicit_reasoning":
+                stage_record.artifact_paths = align_artifact_paths(layout)
+                if not layout.stage_manifest_path(stage_name).exists() or read_stage_manifest(layout.stage_manifest_path(stage_name)).status != "completed":
+                    write_stage_state(
+                        layout,
+                        build_stage_manifest(
+                            stage_name=stage_name,
+                            layout=layout,
+                            job_id=job_id,
+                            build_target=source_path_label,
+                            source_ids=selected_source_ids,
+                            processed_source_ids=input_source_ids,
+                            input_stage=GRAPH_INPUT_STAGE[stage_name],
+                            artifact_paths=stage_record.artifact_paths,
+                            stats=stage_record.stats,
+                            graph_bundle=current_graph,
+                        ),
+                    )
+            elif stage_name == "infer":
                 input_source_ids = resolve_stage_source_ids(layout, stage_name, selected_source_ids)
                 current_graph = run_graph_stage(
                     stage_name,
@@ -882,13 +1994,109 @@ def resolve_stage_source_ids(layout: BuildLayout, stage_name: str, selected_sour
     manifest_path = layout.stage_manifest_path(previous_stage)
     if not manifest_path.exists():
         return []
-    processed_source_ids = set(read_stage_manifest(manifest_path).processed_source_ids)
+    processed_source_ids = set(normalize_source_ids(read_stage_manifest(manifest_path).processed_source_ids))
     return [source_id for source_id in selected if source_id in processed_source_ids]
 
 
 def subtract_source_ids(source_ids: list[str], skipped_source_ids: list[str]) -> list[str]:
     skipped = set(skipped_source_ids)
     return [source_id for source_id in source_ids if source_id not in skipped]
+
+
+def normalize_source_ids(source_ids: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for source_id in source_ids:
+        value = str(source_id).strip()
+        if not value:
+            continue
+        normalized.append(source_id_from_node_id(value) if value.startswith("document:") else value)
+    return sorted(dict.fromkeys(normalized))
+
+
+def normalize_unit_ids(unit_ids: list[str]) -> list[str]:
+    return sorted(dict.fromkeys(str(value).strip() for value in unit_ids if str(value).strip()))
+
+
+def build_unit_source_map(unit_source_map: dict[str, str]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for unit_id, source_id in unit_source_map.items():
+        normalized_unit_id = str(unit_id).strip()
+        normalized_source_id = normalize_source_ids([str(source_id)])[0] if str(source_id).strip() else ""
+        if not normalized_unit_id or not normalized_source_id:
+            raise ValueError("substage unit/source mapping must not contain empty ids")
+        normalized[normalized_unit_id] = normalized_source_id
+    return normalized
+
+
+def source_ids_for_unit_ids(unit_ids: list[str], unit_source_map: dict[str, str]) -> list[str]:
+    normalized_map = build_unit_source_map(unit_source_map)
+    missing_unit_ids = [unit_id for unit_id in normalize_unit_ids(unit_ids) if unit_id not in normalized_map]
+    if missing_unit_ids:
+        raise ValueError(f"missing source mapping for substage unit ids: {', '.join(missing_unit_ids[:5])}")
+    return normalize_source_ids([normalized_map[unit_id] for unit_id in normalize_unit_ids(unit_ids)])
+
+
+def build_unit_substage_manifest(
+    *,
+    stage_name: str,
+    unit_ids: list[str],
+    unit_source_map: dict[str, str],
+    processed_unit_ids: list[str],
+    output_unit_ids: list[str],
+    skipped_unit_ids: list[str],
+    stats: dict[str, object],
+    status: str,
+) -> SubstageStateManifest:
+    normalized_units = normalize_unit_ids(unit_ids)
+    normalized_processed = normalize_unit_ids(processed_unit_ids)
+    normalized_output = normalize_unit_ids(output_unit_ids)
+    normalized_skipped = normalize_unit_ids(skipped_unit_ids)
+    normalized_map = build_unit_source_map(unit_source_map)
+    unknown_unit_ids = [
+        unit_id
+        for unit_id in normalized_units + normalized_processed + normalized_output + normalized_skipped
+        if unit_id not in normalized_map
+    ]
+    if unknown_unit_ids:
+        raise ValueError(
+            f"missing source mapping for substage manifest units: {', '.join(sorted(dict.fromkeys(unknown_unit_ids))[:5])}"
+        )
+    return SubstageStateManifest(
+        name=stage_name,
+        status=status,
+        unit_ids=normalized_units,
+        source_ids=source_ids_for_unit_ids(normalized_units, normalized_map),
+        processed_unit_ids=normalized_processed,
+        processed_source_ids=source_ids_for_unit_ids(normalized_processed, normalized_map),
+        output_unit_ids=normalized_output,
+        output_source_ids=source_ids_for_unit_ids(normalized_output, normalized_map),
+        skipped_unit_ids=normalized_skipped,
+        skipped_source_ids=source_ids_for_unit_ids(normalized_skipped, normalized_map),
+        stats=dict(stats),
+        updated_at=timestamp_utc(),
+    )
+
+
+def merge_unit_substage_manifest(
+    previous: SubstageStateManifest | None,
+    current: SubstageStateManifest,
+) -> SubstageStateManifest:
+    if previous is None:
+        return current
+    return SubstageStateManifest(
+        name=current.name,
+        status=current.status,
+        unit_ids=normalize_unit_ids(previous.unit_ids + current.unit_ids),
+        source_ids=normalize_source_ids(previous.source_ids + current.source_ids),
+        processed_unit_ids=normalize_unit_ids(previous.processed_unit_ids + current.processed_unit_ids),
+        processed_source_ids=normalize_source_ids(previous.processed_source_ids + current.processed_source_ids),
+        output_unit_ids=normalize_unit_ids(previous.output_unit_ids + current.output_unit_ids),
+        output_source_ids=normalize_source_ids(previous.output_source_ids + current.output_source_ids),
+        skipped_unit_ids=normalize_unit_ids(current.skipped_unit_ids),
+        skipped_source_ids=normalize_source_ids(current.skipped_source_ids),
+        stats=dict(current.stats),
+        updated_at=current.updated_at,
+    )
 
 
 def reusable_graph_source_ids(
@@ -912,8 +2120,56 @@ def reusable_graph_source_ids(
     manifest = read_stage_manifest(manifest_path)
     if manifest.status != "completed":
         return []
-    processed_source_ids = set(manifest.processed_source_ids)
+    processed_source_ids = set(normalize_source_ids(manifest.processed_source_ids))
     return [source_id for source_id in source_ids if source_id in processed_source_ids]
+
+
+def reusable_substage_unit_ids(
+    layout: BuildLayout,
+    stage_name: str,
+    substage_name: str,
+    unit_ids: list[str],
+    *,
+    force_rebuild: bool = False,
+    validator: Callable[[list[str], SubstageStateManifest], bool] | None = None,
+) -> list[str]:
+    if force_rebuild or not unit_ids:
+        return []
+    manifest_path = layout.stage_manifest_path(stage_name)
+    if not manifest_path.exists():
+        return []
+    manifest = read_stage_manifest(manifest_path)
+    substage = manifest.substages.get(substage_name)
+    if substage is None or substage.status not in {"completed", "running"}:
+        return []
+    reusable_unit_ids = [
+        unit_id
+        for unit_id in normalize_unit_ids(unit_ids)
+        if unit_id in set(normalize_unit_ids(substage.processed_unit_ids))
+    ]
+    if validator is not None and reusable_unit_ids and not validator(reusable_unit_ids, substage):
+        return []
+    return reusable_unit_ids
+
+
+def substage_output_unit_ids(
+    layout: BuildLayout,
+    stage_name: str,
+    substage_name: str,
+    unit_ids: list[str] | None = None,
+) -> list[str]:
+    manifest_path = layout.stage_manifest_path(stage_name)
+    if not manifest_path.exists():
+        return []
+    manifest = read_stage_manifest(manifest_path)
+    substage = manifest.substages.get(substage_name)
+    if substage is None:
+        return []
+    output_unit_ids = normalize_unit_ids(substage.output_unit_ids)
+    if unit_ids is None:
+        return output_unit_ids
+    requested_unit_ids = set(normalize_unit_ids(unit_ids))
+    return [unit_id for unit_id in output_unit_ids if unit_id in requested_unit_ids]
 
 
 def reusable_artifact_source_ids(
@@ -931,12 +2187,12 @@ def reusable_artifact_source_ids(
     manifest = read_stage_manifest(manifest_path)
     if manifest.status != "completed":
         return []
-    if stage_name == "reference_filter":
-        artifact_path = layout.reference_filter_candidates_path()
+    if stage_name == "detect":
+        artifact_path = layout.detect_candidates_path()
         if not artifact_matches_manifest_stats(artifact_path, int(manifest.stats.get("candidate_count", 0))):
             return []
-    elif stage_name == "relation_classify":
-        results_path = layout.relation_classify_plans_path()
+    elif stage_name == "classify":
+        results_path = layout.classify_results_path()
         edges_path = layout.stage_edges_path(stage_name)
         if not artifact_matches_manifest_stats(results_path, int(manifest.stats.get("result_count", 0))):
             return []
@@ -944,8 +2200,92 @@ def reusable_artifact_source_ids(
             return []
     else:
         return []
-    processed_source_ids = set(manifest.processed_source_ids)
+    processed_source_ids = set(normalize_source_ids(manifest.processed_source_ids))
     return [source_id for source_id in source_ids if source_id in processed_source_ids]
+
+
+def extract_inputs_materialized(
+    layout: BuildLayout,
+    graph_bundle: GraphBundle,
+    source_ids: list[str],
+    substage: SubstageStateManifest,
+) -> bool:
+    if not source_ids:
+        return True
+    if not layout.extract_inputs_path().exists():
+        return False
+    existing_inputs = read_extract_inputs(layout.extract_inputs_path())
+    scoped_inputs = select_extract_inputs(
+        existing_inputs,
+        graph_bundle=graph_bundle,
+        active_source_ids=set(source_ids),
+    )
+    actual_source_ids = {source_id_from_node_id(row.id) for row in scoped_inputs}
+    requested_source_ids = set(normalize_source_ids(source_ids))
+    if not actual_source_ids.issubset(requested_source_ids):
+        return False
+    if set(source_ids) == set(substage.source_ids):
+        expected_count = int(substage.stats.get("input_count", 0))
+        if len(scoped_inputs) != expected_count:
+            return False
+        expected_output_count = int(substage.stats.get("output_source_count", 0))
+        if expected_output_count > 0 and len(actual_source_ids) != expected_output_count:
+            return False
+        return True
+    return True
+
+
+def extract_outputs_materialized(
+    layout: BuildLayout,
+    graph_bundle: GraphBundle,
+    source_ids: list[str],
+    substage: SubstageStateManifest,
+) -> bool:
+    if not source_ids:
+        return True
+    if not layout.extract_inputs_path().exists() or not layout.extract_concepts_path().exists():
+        return False
+    existing_inputs = read_extract_inputs(layout.extract_inputs_path())
+    scoped_inputs = select_extract_inputs(
+        existing_inputs,
+        graph_bundle=graph_bundle,
+        active_source_ids=set(source_ids),
+    )
+    actual_source_ids = {source_id_from_node_id(row.id) for row in scoped_inputs}
+    requested_source_ids = set(normalize_source_ids(source_ids))
+    if not actual_source_ids.issubset(requested_source_ids):
+        return False
+    existing_concepts = read_extract_concepts(layout.extract_concepts_path())
+    scoped_concepts = select_extract_concepts(
+        existing_concepts,
+        graph_bundle=graph_bundle,
+        active_source_ids=set(source_ids),
+    )
+    if set(source_ids) == set(substage.source_ids):
+        expected_count = int(substage.stats.get("input_count", 0))
+        if len(scoped_inputs) != expected_count:
+            return False
+        expected_result_count = int(substage.stats.get("result_count", 0))
+        if len(scoped_concepts) != expected_result_count:
+            return False
+    return True
+
+
+def completed_extract_source_ids(
+    inputs: list[object],
+    completed_input_ids: list[str],
+) -> list[str]:
+    if not inputs:
+        return []
+    completed_input_id_set = {str(value) for value in completed_input_ids}
+    totals: dict[str, int] = {}
+    completed: dict[str, int] = {}
+    for row in inputs:
+        source_id = source_id_from_node_id(str(getattr(row, "id", "")))
+        totals[source_id] = int(totals.get(source_id, 0)) + 1
+        if str(getattr(row, "id", "")) in completed_input_id_set:
+            completed[source_id] = int(completed.get(source_id, 0)) + 1
+    return sorted(source_id for source_id, total in totals.items() if completed.get(source_id, 0) >= total)
 
 
 def build_stage_work_stats(
@@ -991,19 +2331,17 @@ def finalize_stage_work_stats(
     updated_nodes: int = 0,
     updated_edges: int = 0,
 ) -> dict[str, object]:
-    processed_work_units = int(
-        stats.get(
-            "work_units_completed",
-            stats.get("work_units_total", 0),
-        )
-    )
+    total_work_units = int(stats.get("work_units_total", 0))
+    completed_work_units = int(stats.get("work_units_completed", 0))
+    failed_work_units = int(stats.get("work_units_failed", 0))
     stats.update(
         build_stage_work_stats(
             input_source_ids=processed_source_ids + skipped_source_ids,
             processed_source_ids=processed_source_ids,
             skipped_source_ids=skipped_source_ids,
-            work_units_total=processed_work_units + int(skipped_work_units),
-            work_units_completed=processed_work_units,
+            work_units_total=total_work_units + int(skipped_work_units),
+            work_units_completed=completed_work_units,
+            work_units_failed=failed_work_units,
             work_units_skipped=int(skipped_work_units),
             updated_nodes=updated_nodes,
             updated_edges=updated_edges,
@@ -1017,6 +2355,38 @@ def emit_idle_stage_progress(
     stage_name: str,
 ) -> None:
     emit_stage_progress(callback, stage_name, 1, 1)
+
+
+def emit_prefilled_stage_progress(
+    callback: Callable[[str, int, int], None] | None,
+    stage_name: str,
+    *,
+    current: int,
+    total: int,
+) -> None:
+    if total <= 0:
+        emit_idle_stage_progress(callback, stage_name)
+        return
+    emit_stage_progress(callback, stage_name, current, total)
+
+
+def offset_stage_progress_callback(
+    callback: Callable[[str, int, int], None] | None,
+    stage_name: str,
+    *,
+    skipped_units: int,
+    total_units: int,
+) -> Callable[[int, int], None]:
+    def report(current: int, total: int) -> None:
+        del total
+        emit_prefilled_stage_progress(
+            callback,
+            stage_name,
+            current=skipped_units + current,
+            total=total_units,
+        )
+
+    return report
 
 
 def run_graph_stage(
@@ -1040,17 +2410,8 @@ def run_graph_stage(
         return load_graph_snapshot(layout, stage_name)
     base_stage = stage_name if stage_outputs_exist(layout, stage_name) else GRAPH_INPUT_STAGE[stage_name]
     base_graph = load_graph_snapshot(layout, base_stage)
-    if stage_name == "entity_extraction":
-        return run_entity_extraction(
-            base_graph,
-            runtime,
-            active_source_ids=set(selected_source_ids),
-            progress_callback=lambda current, total_items: emit_stage_progress(
-                stage_progress_callback, stage_name, current, total_items
-            ),
-        )
-    if stage_name == "implicit_reasoning":
-        return run_implicit_reasoning(
+    if stage_name == "infer":
+        return run_infer(
             base_graph,
             runtime,
             active_source_ids=set(selected_source_ids),
@@ -1074,19 +2435,48 @@ def build_stage_manifest(
     stats: dict[str, object],
     graph_bundle: GraphBundle | None = None,
     status: str = "completed",
+    substage_states: dict[str, SubstageStateManifest] | None = None,
 ) -> StageStateManifest:
     node_stage = ""
     edge_stage = ""
     if input_stage:
         node_stage, edge_stage = resolve_input_stage_sources(layout, input_stage)
     current_source_ids = derive_stage_source_ids(graph_bundle) if graph_bundle is not None else []
+    merged_substages: dict[str, SubstageStateManifest] = {}
     if layout.stage_manifest_path(stage_name).exists():
         previous = read_stage_manifest(layout.stage_manifest_path(stage_name))
-        merged_source_ids = sorted(set(previous.source_ids) | set(current_source_ids or source_ids))
-        merged_processed_ids = sorted(set(previous.processed_source_ids) | set(processed_source_ids))
+        merged_source_ids = normalize_source_ids(previous.source_ids + (current_source_ids or source_ids))
+        merged_processed_ids = normalize_source_ids(previous.processed_source_ids + processed_source_ids)
+        merged_substages = dict(previous.substages)
     else:
-        merged_source_ids = sorted(current_source_ids or source_ids)
-        merged_processed_ids = sorted(set(processed_source_ids))
+        merged_source_ids = normalize_source_ids(current_source_ids or source_ids)
+        merged_processed_ids = normalize_source_ids(processed_source_ids)
+    for name, state in (substage_states or {}).items():
+        merged_substages[name] = merge_unit_substage_manifest(merged_substages.get(name), state)
+    if stage_name == "extract":
+        merged_substages = {
+            name: state
+            for name, state in merged_substages.items()
+            if name in {"aggregate", "extract"}
+        }
+    if stage_name == "embed":
+        merged_substages = {
+            name: state
+            for name, state in merged_substages.items()
+            if name in {"embed"}
+        }
+    if stage_name == "classify":
+        merged_substages = {
+            name: state
+            for name, state in merged_substages.items()
+            if name in {"model", "llm_judge"}
+        }
+    if stage_name == "align":
+        merged_substages = {
+            name: state
+            for name, state in merged_substages.items()
+            if name in {"pair", "classify", "resolve"}
+        }
     return StageStateManifest(
         stage_name=stage_name,
         build_target=build_target,
@@ -1098,6 +2488,7 @@ def build_stage_manifest(
         artifact_paths=dict(artifact_paths),
         input_node_stage=node_stage,
         input_edge_stage=edge_stage,
+        substages=merged_substages,
         updated_at=timestamp_utc(),
         stats=dict(stats),
     )
@@ -1128,7 +2519,7 @@ def can_reuse_stage(
     manifest = read_stage_manifest(manifest_path)
     if manifest.status != "completed":
         return False
-    if sorted(manifest.processed_source_ids) != sorted(source_ids):
+    if normalize_source_ids(manifest.processed_source_ids) != normalize_source_ids(source_ids):
         return False
     if require_nodes and not layout.stage_nodes_path(stage_name).exists():
         return False
@@ -1232,18 +2623,25 @@ def clear_stage_outputs(layout: BuildLayout, stage_name: str) -> None:
     _unlink_if_exists(layout.stage_manifest_path(stage_name))
     if stage_name == "normalize":
         _unlink_if_exists(layout.normalize_index_path())
-        _unlink_if_exists(layout.normalize_log_path())
         shutil.rmtree(layout.normalize_documents_dir(), ignore_errors=True)
         layout.normalize_documents_dir().mkdir(parents=True, exist_ok=True)
         return
-    if stage_name == "reference_filter":
-        _unlink_if_exists(layout.reference_filter_candidates_path())
-        _unlink_if_exists(layout.reference_filter_log_path())
+    if stage_name == "detect":
+        _unlink_if_exists(layout.detect_candidates_path())
         return
-    if stage_name == "relation_classify":
-        _unlink_if_exists(layout.relation_classify_plans_path())
-        _unlink_if_exists(layout.relation_classify_llm_judge_path())
-        _unlink_if_exists(layout.relation_classify_log_path())
+    if stage_name == "classify":
+        _unlink_if_exists(layout.classify_pending_path())
+        _unlink_if_exists(layout.classify_results_path())
+        _unlink_if_exists(layout.classify_llm_judge_path())
+    if stage_name == "extract":
+        _unlink_if_exists(layout.extract_inputs_path())
+        _unlink_if_exists(layout.extract_concepts_path())
+    if stage_name == "embed":
+        _unlink_if_exists(layout.embed_concepts_path())
+        _unlink_if_exists(layout.embed_vectors_path())
+        return
+    if stage_name == "align":
+        _unlink_if_exists(layout.align_pairs_path())
     _unlink_if_exists(layout.stage_nodes_path(stage_name))
     _unlink_if_exists(layout.stage_edges_path(stage_name))
 
@@ -1253,13 +2651,43 @@ def _unlink_if_exists(path: Path) -> None:
         path.unlink()
 
 
-def relation_artifact_paths(layout: BuildLayout) -> dict[str, str]:
+def classify_artifact_paths(layout: BuildLayout) -> dict[str, str]:
     return {
-        "primary": str(layout.stage_edges_path("relation_classify")),
-        "edges": str(layout.stage_edges_path("relation_classify")),
-        "results": str(layout.relation_classify_plans_path()),
-        "llm_judgments": str(layout.relation_classify_llm_judge_path()),
+        "primary": str(layout.stage_edges_path("classify")),
+        "edges": str(layout.stage_edges_path("classify")),
+        "pending": str(layout.classify_pending_path()),
+        "results": str(layout.classify_results_path()),
+        "llm_judgments": str(layout.classify_llm_judge_path()),
     }
+
+
+def extract_artifact_paths(layout: BuildLayout) -> dict[str, str]:
+    return {
+        "primary": str(layout.extract_concepts_path()),
+        "inputs": str(layout.extract_inputs_path()),
+        "results": str(layout.extract_concepts_path()),
+    }
+
+
+def embed_artifact_paths(layout: BuildLayout) -> dict[str, str]:
+    return {
+        "primary": str(layout.embed_concepts_path()),
+        "concepts": str(layout.embed_concepts_path()),
+        "vectors": str(layout.embed_vectors_path()),
+    }
+
+
+def align_artifact_paths(layout: BuildLayout) -> dict[str, str]:
+    primary = layout.stage_nodes_path("align") if layout.stage_nodes_path("align").exists() else layout.align_pairs_path()
+    paths = {
+        "primary": str(primary),
+        "pairs": str(layout.align_pairs_path()),
+    }
+    if layout.stage_nodes_path("align").exists():
+        paths["nodes"] = str(layout.stage_nodes_path("align"))
+    if layout.stage_edges_path("align").exists():
+        paths["edges"] = str(layout.stage_edges_path("align"))
+    return paths
 
 
 def build_graph_stage_stats(graph_bundle: GraphBundle, source_ids: list[str]) -> dict[str, int]:

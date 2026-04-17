@@ -21,6 +21,7 @@
 
 - `bigmodel`
 - `deepseek`
+- `siliconflow`
 
 供应商命名使用明确的平台或厂商标识，不使用宽泛兼容层命名。
 

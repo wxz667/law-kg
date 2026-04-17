@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Callable
 
 from ...contracts import NormalizeIndexEntry, NormalizeStageIndex
-from ...io import BuildLayout, read_normalize_index, write_json, write_normalize_index
+from ...io import BuildLayout, read_normalize_index, write_normalize_index
 from ...pipeline.incremental import merge_normalize_index, read_existing_normalize_index
 from .metadata import build_document_index, load_metadata_items
 from .normalizer import process_metadata_item
@@ -100,7 +100,6 @@ def run(
     if source_ids is not None and existing_index is not None:
         index = merge_normalize_index(existing_index, entries)
     write_normalize_index(layout.normalize_index_path(), index)
-    write_json(layout.normalize_log_path(), index.to_dict())
     return index
 
 

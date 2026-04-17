@@ -96,7 +96,7 @@ def overlapping_prefix_length(prefix_text: str, replacement_text: str) -> int:
 
 def build_dataset(
     output_dir: Path,
-    reference_filter_dir: Path | None = None,
+    detect_dir: Path | None = None,
     config_path: Path | None = None,
     limit: int | None = None,
     intermediate_dir: Path | None = None,
@@ -112,12 +112,12 @@ def build_dataset(
     requested_total = limit if limit is not None else int(dataset_config.get("max_samples", 1500))
     sample_size = min(requested_total, int(dataset_config.get("max_samples", 1500)))
     intermediate_root = intermediate_dir or Path("data/intermediate/interprets_filter")
-    candidate_root = reference_filter_dir or graph_dir
+    candidate_root = detect_dir or graph_dir
     del logs_dir
     if candidate_root is None:
-        raise ValueError("build_dataset requires reference_filter_dir.")
+        raise ValueError("build_dataset requires detect_dir.")
     if not (candidate_root / CANDIDATE_FILE).exists():
-        raise FileNotFoundError(f"Missing reference_filter candidates: {candidate_root / CANDIDATE_FILE}")
+        raise FileNotFoundError(f"Missing detect candidates: {candidate_root / CANDIDATE_FILE}")
 
     seed_rows = load_existing_detailed_rows(intermediate_root) if incremental else []
     if not incremental:
@@ -131,7 +131,7 @@ def build_dataset(
     else:
         existing_ids = {str(row["sample_id"]) for row in seed_rows}
         candidates = collect_candidates(
-            reference_filter_dir=candidate_root,
+            detect_dir=candidate_root,
             pool_limit=estimate_candidate_pool_limit(sample_size, dataset_config, config.distill),
             label_weights=dict(dataset_config.get("label_weights", {})),
             cancel_event=cancel_event,
@@ -685,7 +685,7 @@ def estimate_max_distill_total(sample_size: int, available_candidates: int, data
 
 
 def collect_candidates(
-    reference_filter_dir: Path,
+    detect_dir: Path,
     *,
     pool_limit: int | None = None,
     label_weights: dict[str, Any] | None = None,
@@ -693,7 +693,7 @@ def collect_candidates(
     phase_progress_callback: Any | None = None,
     cancel_event: Any | None = None,
 ) -> list[dict[str, Any]]:
-    candidate_path = reference_filter_dir / CANDIDATE_FILE
+    candidate_path = detect_dir / CANDIDATE_FILE
     raw_candidates = read_reference_candidates(candidate_path)
     total_raw = max(len(raw_candidates), 1)
     if phase_progress_callback is not None:

@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-uv run python -m builder.cli build "$@"
+PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}." uv run python -m builder.cli build "$@"

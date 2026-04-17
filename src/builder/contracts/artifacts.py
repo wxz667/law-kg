@@ -203,7 +203,7 @@ class ReferenceCandidateRecord:
 
 
 @dataclass(frozen=True)
-class RelationClassifyRecord:
+class ClassifyRecord:
     id: str
     source_node_id: str
     text: str
@@ -226,7 +226,7 @@ class RelationClassifyRecord:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "RelationClassifyRecord":
+    def from_dict(cls, payload: dict[str, Any]) -> "ClassifyRecord":
         return cls(
             id=str(payload["id"]),
             source_node_id=str(payload["source_node_id"]),
@@ -240,7 +240,121 @@ class RelationClassifyRecord:
 
 
 @dataclass(frozen=True)
+class ExtractInputRecord:
+    id: str
+    hierarchy: str
+    content: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "hierarchy": self.hierarchy,
+            "content": self.content,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ExtractInputRecord":
+        return cls(
+            id=str(payload["id"]),
+            hierarchy=str(payload.get("hierarchy", "")),
+            content=str(payload["content"]),
+        )
+
+
+@dataclass(frozen=True)
+class ExtractConceptRecord:
+    id: str
+    concepts: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "concepts": list(self.concepts),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ExtractConceptRecord":
+        return cls(
+            id=str(payload["id"]),
+            concepts=[str(value) for value in payload.get("concepts", []) if str(value).strip()],
+        )
+
+
+@dataclass(frozen=True)
+class EmbeddedConceptRecord:
+    id: str
+    source_node_id: str
+    text: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "source_node_id": self.source_node_id,
+            "text": self.text,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "EmbeddedConceptRecord":
+        return cls(
+            id=str(payload["id"]),
+            source_node_id=str(payload["source_node_id"]),
+            text=str(payload["text"]),
+        )
+
+
+@dataclass(frozen=True)
+class ConceptVectorRecord:
+    id: str
+    vector: list[float]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "vector": [float(value) for value in self.vector],
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ConceptVectorRecord":
+        return cls(
+            id=str(payload["id"]),
+            vector=[float(value) for value in payload.get("vector", [])],
+        )
+
+
+@dataclass(frozen=True)
+class AlignPairRecord:
+    left_id: str
+    right_id: str
+    left_text: str
+    right_text: str
+    similarity: float
+    relation: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "left_id": self.left_id,
+            "right_id": self.right_id,
+            "left_text": self.left_text,
+            "right_text": self.right_text,
+            "similarity": float(self.similarity),
+            "relation": self.relation,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "AlignPairRecord":
+        return cls(
+            left_id=str(payload["left_id"]),
+            right_id=str(payload["right_id"]),
+            left_text=str(payload["left_text"]),
+            right_text=str(payload["right_text"]),
+            similarity=float(payload.get("similarity", 0.0)),
+            relation=str(payload.get("relation", "")),
+        )
+
+
+@dataclass(frozen=True)
 class LlmJudgeDetailRecord:
+    id: str
     source_id: str
     text: str
     label: str
@@ -248,6 +362,7 @@ class LlmJudgeDetailRecord:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.id,
             "source_id": self.source_id,
             "text": self.text,
             "label": self.label,
@@ -257,8 +372,49 @@ class LlmJudgeDetailRecord:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "LlmJudgeDetailRecord":
         return cls(
+            id=str(payload.get("id", "")),
             source_id=str(payload["source_id"]),
             text=str(payload["text"]),
             label=str(payload["label"]),
             reason=str(payload.get("reason", "")),
+        )
+
+
+@dataclass(frozen=True)
+class ClassifyPendingRecord:
+    id: str
+    source_node_id: str
+    text: str
+    target_node_ids: list[str]
+    target_categories: list[str]
+    source_category: str
+    prediction_is_interprets: bool
+    prediction_score: float
+    is_legislative_interpretation: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "source_node_id": self.source_node_id,
+            "text": self.text,
+            "target_node_ids": list(self.target_node_ids),
+            "target_categories": list(self.target_categories),
+            "source_category": self.source_category,
+            "prediction_is_interprets": self.prediction_is_interprets,
+            "prediction_score": self.prediction_score,
+            "is_legislative_interpretation": self.is_legislative_interpretation,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ClassifyPendingRecord":
+        return cls(
+            id=str(payload["id"]),
+            source_node_id=str(payload["source_node_id"]),
+            text=str(payload["text"]),
+            target_node_ids=[str(value) for value in payload.get("target_node_ids", []) if str(value).strip()],
+            target_categories=[str(value) for value in payload.get("target_categories", []) if str(value).strip()],
+            source_category=str(payload.get("source_category", "")),
+            prediction_is_interprets=bool(payload.get("prediction_is_interprets", False)),
+            prediction_score=float(payload.get("prediction_score", 0.0)),
+            is_legislative_interpretation=bool(payload.get("is_legislative_interpretation", False)),
         )
