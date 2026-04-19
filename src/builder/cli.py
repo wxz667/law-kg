@@ -132,6 +132,7 @@ def run_build_command(
             stage_progress_callback=display.handle,
             stage_summary_callback=display.stage_summary,
             finalizing_callback=display.finalizing_hint,
+            stage_error_callback=display.stage_error,
             cancel_event=cancel_event,
         )
 
@@ -151,6 +152,7 @@ def run_build_command(
         progress_callback=handle_progress,
         stage_summary_callback=display.stage_summary,
         finalizing_callback=display.finalizing_hint,
+        stage_error_callback=display.stage_error,
         cancel_event=cancel_event,
     )
 
@@ -197,14 +199,6 @@ def split_graph_export(graph_path: Path, output_root: Path) -> None:
             "source": edge.source,
             "target": edge.target,
             "type": edge.type,
-            "weight": edge.weight,
-            "predicted": edge.predicted,
-            "canonical": edge.canonical,
-            "model": edge.model,
-            "label": edge.label,
-            "concept_id": edge.concept_id,
-            "start_offset": edge.start_offset,
-            "end_offset": edge.end_offset,
         }
         for edge in edges
     ]
@@ -215,17 +209,16 @@ def split_graph_export(graph_path: Path, output_root: Path) -> None:
             "level": node.level,
             "name": node.name,
             "text": node.text,
+            "description": node.description,
             "category": node.category,
             "status": node.status,
             "issuer": node.issuer,
             "publish_date": node.publish_date,
             "effective_date": node.effective_date,
             "source_url": node.source_url,
-            "alignment_status": node.alignment_status,
-            "normalized_text": node.normalized_text,
         }
         for node in nodes
-        if node.text or node.level == "document"
+        if node.text or node.description or node.level == "document"
     ]
     write_jsonl(output_root / "neo4j" / "nodes.jsonl", neo4j_nodes)
     write_jsonl(output_root / "neo4j" / "edges.jsonl", neo4j_edges)

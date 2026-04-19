@@ -4,6 +4,7 @@ import atexit
 import sys
 import threading
 import time
+from pathlib import Path
 
 
 BAR_WIDTH = 42
@@ -165,12 +166,31 @@ class StageBarDisplay:
             fragments.append(colorize(f"{skipped} skipped", YELLOW, enabled=self.use_color))
         print(", ".join(fragments), file=sys.stderr, flush=True)
 
+    def stage_error(self, stage_name: str, error_text: str, job_log_path: str) -> None:
+        self._close_bar()
+        header = colorize(f"[{stage_name}] failed", RED, enabled=self.use_color)
+        print(header, file=sys.stderr, flush=True)
+        error_text = str(error_text or "").strip()
+        if error_text:
+            summary = next((line.strip() for line in reversed(error_text.splitlines()) if line.strip()), "")
+            if summary:
+                print(summary, file=sys.stderr, flush=True)
+        if job_log_path:
+            print(
+                f"{colorize('log', CYAN, enabled=self.use_color)}: {Path(job_log_path)}",
+                file=sys.stderr,
+                flush=True,
+            )
+
     def print_final_summary(self, result: dict[str, object]) -> None:
         self._close_bar()
         separator = colorize("─" * 56, DIM, enabled=self.use_color)
         status = str(result.get("status", "completed"))
+        source_count = int(result.get("source_count", 0))
         updated_nodes = int(result.get("updated_nodes", 0))
         updated_edges = int(result.get("updated_edges", 0))
+        node_count = int(result.get("node_count", 0))
+        edge_count = int(result.get("edge_count", 0))
         job_log_path = str(result.get("manifest_path", ""))
         final_nodes = str(result.get("artifact_paths", {}).get("final_nodes", ""))
         final_edges = str(result.get("artifact_paths", {}).get("final_edges", ""))
@@ -181,9 +201,22 @@ class StageBarDisplay:
             flush=True,
         )
         print(
+            f"{colorize('scope', CYAN, enabled=self.use_color)}: "
+            f"{colorize(str(source_count), GREEN, enabled=self.use_color)} documents",
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
             f"{colorize('updated', CYAN, enabled=self.use_color)}: "
             f"{colorize(str(updated_nodes), GREEN, enabled=self.use_color)} nodes, "
             f"{colorize(str(updated_edges), GREEN, enabled=self.use_color)} edges",
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
+            f"{colorize('graph', CYAN, enabled=self.use_color)}: "
+            f"{colorize(str(node_count), GREEN, enabled=self.use_color)} nodes, "
+            f"{colorize(str(edge_count), GREEN, enabled=self.use_color)} edges",
             file=sys.stderr,
             flush=True,
         )

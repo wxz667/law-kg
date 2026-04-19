@@ -7,11 +7,33 @@ from ...utils.locator import NodeLocator, node_id_from_locator, node_locator_fro
 from .nodes import build_item_name, build_sub_item_name
 
 
-def collapse_single_paragraph_item_branches(nodes: list[NodeRecord], edges: list[EdgeRecord]) -> None:
-    node_index = {node.id: node for node in nodes}
+def collapse_single_paragraph_item_branches(
+    nodes: list[NodeRecord],
+    edges: list[EdgeRecord],
+    *,
+    source_id: str | None = None,
+) -> None:
+    target_source_id = str(source_id).strip() or None
+    if target_source_id is None:
+        relevant_nodes = list(nodes)
+        relevant_edges = list(edges)
+    else:
+        relevant_nodes = [
+            node for node in nodes if source_id_from_node_id(node.id) == target_source_id
+        ]
+        relevant_node_ids = {node.id for node in relevant_nodes}
+        relevant_edges = [
+            edge
+            for edge in edges
+            if edge.type == "CONTAINS"
+            and edge.source in relevant_node_ids
+            and edge.target in relevant_node_ids
+        ]
+
+    node_index = {node.id: node for node in relevant_nodes}
     children_by_parent: dict[str, list[str]] = defaultdict(list)
     paragraph_parent: dict[str, str] = {}
-    for edge in edges:
+    for edge in relevant_edges:
         if edge.type != "CONTAINS":
             continue
         children_by_parent[edge.source].append(edge.target)
@@ -22,7 +44,7 @@ def collapse_single_paragraph_item_branches(nodes: list[NodeRecord], edges: list
     id_remap: dict[str, str] = {}
     renamed_nodes: dict[str, tuple[str, str]] = {}
 
-    for article in nodes:
+    for article in relevant_nodes:
         if article.level != "article":
             continue
         paragraph_ids = [child_id for child_id in children_by_parent.get(article.id, []) if node_index.get(child_id) and node_index[child_id].level == "paragraph"]
@@ -49,7 +71,7 @@ def collapse_single_paragraph_item_branches(nodes: list[NodeRecord], edges: list
     if not collapsed_paragraph_ids and not id_remap:
         return
 
-    for node in nodes:
+    for node in relevant_nodes:
         if node.id in collapsed_paragraph_ids:
             continue
         if node.id not in id_remap:
@@ -61,7 +83,8 @@ def collapse_single_paragraph_item_branches(nodes: list[NodeRecord], edges: list
             node.name = renamed_name[1]
 
     rewritten_edges: list[EdgeRecord] = []
-    for edge in edges:
+    rewritten_relevant_edges: list[EdgeRecord] = []
+    for edge in relevant_edges:
         if edge.target in collapsed_paragraph_ids:
             continue
         if edge.source in collapsed_paragraph_ids:
@@ -72,7 +95,7 @@ def collapse_single_paragraph_item_branches(nodes: list[NodeRecord], edges: list
         else:
             source_id = id_remap.get(edge.source, edge.source)
         target_id = id_remap.get(edge.target, edge.target)
-        rewritten_edges.append(
+        rewritten_relevant_edges.append(
             EdgeRecord(
                 id=build_edge_id(source_id, target_id, edge.type),
                 source=source_id,
@@ -81,8 +104,26 @@ def collapse_single_paragraph_item_branches(nodes: list[NodeRecord], edges: list
             )
         )
 
-    nodes[:] = [node for node in nodes if node.id not in collapsed_paragraph_ids]
-    edges[:] = rewritten_edges
+    if target_source_id is None:
+        nodes[:] = [node for node in nodes if node.id not in collapsed_paragraph_ids]
+        edges[:] = rewritten_relevant_edges
+        return
+
+    collapsed_node_ids = set(collapsed_paragraph_ids)
+    relevant_edge_ids = {
+        (edge.source, edge.target, edge.type)
+        for edge in relevant_edges
+    }
+    nodes[:] = [
+        node
+        for node in nodes
+        if node.id not in collapsed_node_ids
+    ]
+    edges[:] = [
+        edge
+        for edge in edges
+        if (edge.source, edge.target, edge.type) not in relevant_edge_ids
+    ] + rewritten_relevant_edges
 
 
 def remap_item_branch(

@@ -37,7 +37,7 @@ def run_structure(
         nodes.append(document_node)
         finalize_document_body(nodes, edges, unit, document_node, counters)
         finalize_appendices(nodes, edges, unit, document_node, counters)
-        collapse_single_paragraph_item_branches(nodes, edges)
+        collapse_single_paragraph_item_branches(nodes, edges, source_id=unit.source_id)
         if progress_callback is not None:
             progress_callback(index, total)
         if checkpoint_callback is not None and checkpoint_every > 0 and (

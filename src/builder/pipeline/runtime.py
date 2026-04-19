@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import math
 import json
 from pathlib import Path
 from typing import Any
 
-from interprets_filter.api import predict_interprets
-from rgcn.api import predict_implicit_relations
 from utils.llm.base import ProviderRequestConfig, build_provider_request_config
 from utils.llm.factory import build_provider_client
 
@@ -53,8 +50,8 @@ class PipelineRuntime:
     def extract_config(self) -> dict[str, Any]:
         return self.builder_stage_config("extract")
 
-    def embed_config(self) -> dict[str, Any]:
-        return self.builder_stage_config("embed")
+    def aggregate_config(self) -> dict[str, Any]:
+        return self.builder_stage_config("aggregate")
 
     def align_config(self) -> dict[str, Any]:
         return self.builder_stage_config("align")
@@ -73,26 +70,18 @@ class PipelineRuntime:
         client = self._provider_client(request_config)
         return client.generate_text(messages, model=request_config.model)
 
+    def embed_texts(self, texts: list[str], request_config: ProviderRequestConfig) -> list[list[float]]:
+        client = self._provider_client(request_config)
+        return client.embed_texts(texts, model=request_config.model)
+
     def predict_interprets(self, inputs: list[Any]) -> list[Any]:
+        from interprets_filter.api import predict_interprets
+
         return predict_interprets(inputs, model_dir=self.models_root / "interprets_filter", config_path=self.config_path)
 
-    def embed_texts(self, texts: list[str], request_config: ProviderRequestConfig | None = None) -> list[list[float]]:
-        if request_config is not None:
-            client = self._provider_client(request_config)
-            return client.embed_texts(texts, model=request_config.model)
-        vectors: list[list[float]] = []
-        for text in texts:
-            buckets = [0.0] * 16
-            if not text:
-                vectors.append(buckets)
-                continue
-            for char in text:
-                buckets[ord(char) % len(buckets)] += 1.0
-            norm = math.sqrt(sum(value * value for value in buckets)) or 1.0
-            vectors.append([value / norm for value in buckets])
-        return vectors
-
     def predict_implicit_relations(self, graph_features: list[dict[str, object]]) -> list[Any]:
+        from rgcn.api import predict_implicit_relations
+
         return predict_implicit_relations(graph_features, model_dir=self.models_root / "rgcn")
 
     def _provider_client(self, request_config: ProviderRequestConfig) -> Any:

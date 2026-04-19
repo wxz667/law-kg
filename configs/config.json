@@ -1,10 +1,10 @@
 {
   "builder": {
     "normalize": {
-      "checkpoint_every": 100
+      "checkpoint_every": 200
     },
     "structure": {
-      "checkpoint_every": 100
+      "checkpoint_every": 1000
     },
     "detect": {
       "document_workers": 0,
@@ -23,7 +23,7 @@
       },
       "llm_conflict": {
         "provider": "bigmodel",
-        "model": "glm-4.7-flash",
+        "model": "glm-4.5-air",
         "batch_size": 4,
         "concurrent_requests": 4,
         "request_timeout_seconds": 90,
@@ -41,12 +41,12 @@
       }
     },
     "extract": {
-      "checkpoint_every": 10,
+      "checkpoint_every": 20,
       "llm_extract": {
         "provider": "bigmodel",
-        "model": "glm-4.7", 
-        "batch_size": 2,
-        "concurrent_requests": 10,
+        "model": "glm-4.5-air",
+        "batch_size": 4,
+        "concurrent_requests": 5,
         "request_timeout_seconds": 90,
         "max_retries": 2,
         "rate_limit": {
@@ -57,16 +57,39 @@
         },
         "params": {
           "temperature": 0.1,
-          "max_tokens": 512
+          "max_tokens": 4096
         }
       }
     },
-    "embed": {
-      "checkpoint_every": 200,
-      "embedding": {
+    "aggregate": {
+      "checkpoint_every": 20,
+      "llm_aggregate": {
+        "provider": "siliconflow",
+        "model": "Pro/deepseek-ai/DeepSeek-V3.2",
+        "batch_size": 4,
+        "concurrent_requests": 5,
+        "request_timeout_seconds": 90,
+        "max_retries": 2,
+        "rate_limit": {
+          "rpm": 0,
+          "tpm": 0,
+          "retry_count": 3,
+          "backoff_seconds": 5
+        },
+        "params": {
+          "temperature": 0.0,
+          "max_tokens": 4096
+        }
+      }
+    },
+    "align": {
+      "checkpoint_every": 20,
+      "embed": {
+        "checkpoint_every": 200,
         "provider": "siliconflow",
         "model": "BAAI/bge-m3",
-        "batch_size": 64,
+        "batch_size": 32,
+        "concurrent_requests": 4,
         "request_timeout_seconds": 90,
         "max_retries": 2,
         "rate_limit": {
@@ -76,18 +99,16 @@
           "backoff_seconds": 5
         },
         "params": {}
-      }
-    },
-    "align": {
-      "pair": {
-        "checkpoint_every": 100,
-        "top_k": 20,
-        "related_threshold": 0.85,
-        "equivalent_threshold": 0.96
       },
-      "classify": {
+      "recall": {
+        "checkpoint_every": 1000,
+        "top_k_per_concept": 20,
+        "similarity_threshold": 0.85,
+        "matrix_block_size": 512
+      },
+      "judge": {
         "provider": "bigmodel",
-        "model": "glm-4.7-flash",
+        "model": "glm-4.5-air",
         "checkpoint_every": 100,
         "batch_size": 25,
         "concurrent_requests": 4,
@@ -103,9 +124,6 @@
           "temperature": 0.0,
           "max_tokens": 512
         }
-      },
-      "resolve": {
-        "checkpoint_every": 200
       }
     }
   },

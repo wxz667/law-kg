@@ -57,6 +57,13 @@ def _structural_edge_types() -> set[str]:
     }
 
 
+def _semantic_edge_rules() -> set[tuple[str, str, str]]:
+    return {
+        (rule["source_type"], rule["target_type"], rule["edge_type"])
+        for rule in load_graph_schema().get("semantic_edge_rules", [])
+    }
+
+
 @dataclass
 class NodeRecord:
     id: str
@@ -64,6 +71,7 @@ class NodeRecord:
     name: str
     level: str
     text: str = ""
+    description: str = ""
     category: str = ""
     status: str = ""
     issuer: str = ""
@@ -89,6 +97,7 @@ class NodeRecord:
         }
         for field_name in (
             "text",
+            "description",
             "category",
             "status",
             "issuer",
@@ -118,6 +127,14 @@ class NodeRecord:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "NodeRecord":
+        return cls._from_dict(payload, validate=True)
+
+    @classmethod
+    def from_dict_unchecked(cls, payload: dict[str, Any]) -> "NodeRecord":
+        return cls._from_dict(payload, validate=False)
+
+    @classmethod
+    def _from_dict(cls, payload: dict[str, Any], *, validate: bool) -> "NodeRecord":
         node_type = str(payload.get("type", "") or "")
         field_names = {item.name for item in fields(cls)}
         allowed_payload_fields = {"id", "type", "name", "level"}
@@ -129,7 +146,8 @@ class NodeRecord:
             if key in field_names and key in allowed_payload_fields
         }
         node = cls(**filtered)
-        node.validate()
+        if validate:
+            node.validate()
         return node
 
     def validate(self) -> None:
@@ -146,6 +164,7 @@ class NodeRecord:
         allowed_fields = _allowed_fields_for_type(self.type)
         for field_name in (
             "text",
+            "description",
             "category",
             "status",
             "issuer",
@@ -174,47 +193,31 @@ class EdgeRecord:
     source: str
     target: str
     type: str
-    weight: float = 1.0
-    predicted: bool = False
-    canonical: bool = False
-    model: str = ""
-    label: str = ""
-    concept_id: str = ""
-    start_offset: int = -1
-    end_offset: int = -1
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
-        payload: dict[str, Any] = {
+        return {
             "id": self.id,
             "source": self.source,
             "target": self.target,
             "type": self.type,
         }
-        if self.weight != 1.0:
-            payload["weight"] = self.weight
-        if self.predicted:
-            payload["predicted"] = True
-        if self.canonical:
-            payload["canonical"] = True
-        if self.model:
-            payload["model"] = self.model
-        if self.label:
-            payload["label"] = self.label
-        if self.concept_id:
-            payload["concept_id"] = self.concept_id
-        if self.start_offset >= 0:
-            payload["start_offset"] = self.start_offset
-        if self.end_offset >= 0:
-            payload["end_offset"] = self.end_offset
-        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "EdgeRecord":
+        return cls._from_dict(payload, validate=True)
+
+    @classmethod
+    def from_dict_unchecked(cls, payload: dict[str, Any]) -> "EdgeRecord":
+        return cls._from_dict(payload, validate=False)
+
+    @classmethod
+    def _from_dict(cls, payload: dict[str, Any], *, validate: bool) -> "EdgeRecord":
         field_names = {item.name for item in fields(cls)}
         filtered = {key: value for key, value in payload.items() if key in field_names}
         edge = cls(**filtered)
-        edge.validate()
+        if validate:
+            edge.validate()
         return edge
 
     def validate(self) -> None:
@@ -257,6 +260,7 @@ class GraphBundle:
 
         structural_rules = _structural_edge_rules()
         structural_edge_types = _structural_edge_types()
+        semantic_edge_rules = _semantic_edge_rules()
         allowed_outgoing_edges = _allowed_outgoing_edges()
         for edge in self.edges:
             source_node = node_index[edge.source]
@@ -275,6 +279,17 @@ class GraphBundle:
                     f"Structural edge {edge.id} violates schema rule: "
                     f"{source_node.level} -> {target_node.level} via {edge.type}."
                 )
+            if edge.type not in structural_edge_types and semantic_edge_rules and (
+                source_node.type,
+                target_node.type,
+                edge.type,
+            ) not in semantic_edge_rules:
+                matching_rules = [rule for rule in semantic_edge_rules if rule[2] == edge.type]
+                if matching_rules:
+                    raise ValueError(
+                        f"Semantic edge {edge.id} violates schema rule: "
+                        f"{source_node.type} -> {target_node.type} via {edge.type}."
+                    )
 
 
 def deduplicate_graph(bundle: GraphBundle) -> GraphBundle:
@@ -285,7 +300,7 @@ def deduplicate_graph(bundle: GraphBundle) -> GraphBundle:
     edge_index: dict[tuple[str, str, str], EdgeRecord] = {}
     for edge in bundle.edges:
         key = (edge.source, edge.target, edge.type)
-        if key not in edge_index or edge.weight > edge_index[key].weight:
+        if key not in edge_index:
             edge_index[key] = edge
 
     deduped = GraphBundle(nodes=list(node_index.values()), edges=list(edge_index.values()))

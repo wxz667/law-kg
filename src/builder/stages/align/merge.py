@@ -76,8 +76,6 @@ def build_mentions_edges(
             source=source_node_id,
             target=canonical_id,
             type="MENTIONS",
-            canonical=True,
-            model="builder-align-resolve",
         )
         for source_node_id, canonical_id in mention_pairs
     ]
@@ -93,8 +91,6 @@ def build_related_edges(
             source=left_id,
             target=right_id,
             type="RELATED_TO",
-            canonical=True,
-            model="builder-align-resolve",
         )
         for left_id, right_id in deduped_pairs
     ]

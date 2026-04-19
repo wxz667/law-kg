@@ -14,9 +14,5 @@ def append_predicted_edges(graph_bundle, predictions, edge_plans) -> None:
                 source=source_id,
                 target=target_id,
                 type=prediction.relation_type,
-                weight=prediction.score,
-                predicted=True,
-                model=prediction.model,
-                concept_id=concept_id,
             )
         )

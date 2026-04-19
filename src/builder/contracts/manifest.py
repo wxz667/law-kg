@@ -100,107 +100,86 @@ class JobLogRecord:
 
 @dataclass
 class SubstageStateManifest:
-    name: str
-    status: str
-    unit_ids: list[str] = field(default_factory=list)
-    source_ids: list[str] = field(default_factory=list)
-    processed_source_ids: list[str] = field(default_factory=list)
-    processed_unit_ids: list[str] = field(default_factory=list)
-    output_unit_ids: list[str] = field(default_factory=list)
-    skipped_unit_ids: list[str] = field(default_factory=list)
-    output_source_ids: list[str] = field(default_factory=list)
-    skipped_source_ids: list[str] = field(default_factory=list)
-    stats: dict[str, Any] = field(default_factory=dict)
+    inputs: list[str] = field(default_factory=list)
+    artifacts: list[str] = field(default_factory=list)
     updated_at: str = ""
+    unit: str = ""
+    stats: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    processed_units: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "status": self.status,
-            "unit_ids": list(self.unit_ids),
-            "source_ids": list(self.source_ids),
-            "processed_source_ids": list(self.processed_source_ids),
-            "processed_unit_ids": list(self.processed_unit_ids),
-            "output_unit_ids": list(self.output_unit_ids),
-            "skipped_unit_ids": list(self.skipped_unit_ids),
-            "output_source_ids": list(self.output_source_ids),
-            "skipped_source_ids": list(self.skipped_source_ids),
-            "stats": dict(self.stats),
+        payload = {
+            "inputs": list(self.inputs),
+            "artifacts": list(self.artifacts),
             "updated_at": self.updated_at,
+            "unit": self.unit,
+            "stats": dict(self.stats),
         }
+        if self.metadata:
+            payload["metadata"] = dict(self.metadata)
+        if self.processed_units:
+            payload["processed_units"] = list(self.processed_units)
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "SubstageStateManifest":
         return cls(
-            name=payload["name"],
-            status=payload["status"],
-            unit_ids=[str(value) for value in payload.get("unit_ids", payload.get("source_ids", []))],
-            source_ids=[str(value) for value in payload.get("source_ids", [])],
-            processed_source_ids=[str(value) for value in payload.get("processed_source_ids", [])],
-            processed_unit_ids=[str(value) for value in payload.get("processed_unit_ids", [])],
-            output_unit_ids=[str(value) for value in payload.get("output_unit_ids", payload.get("output_source_ids", []))],
-            skipped_unit_ids=[str(value) for value in payload.get("skipped_unit_ids", payload.get("skipped_source_ids", []))],
-            output_source_ids=[str(value) for value in payload.get("output_source_ids", [])],
-            skipped_source_ids=[str(value) for value in payload.get("skipped_source_ids", [])],
+            inputs=[str(value) for value in payload.get("inputs", [])],
+            artifacts=[str(value) for value in payload.get("artifacts", [])],
+            updated_at=str(payload.get("updated_at", "") or ""),
+            unit=str(payload.get("unit", "") or ""),
             stats=dict(payload.get("stats", {})),
-            updated_at=payload.get("updated_at", ""),
+            metadata=dict(payload.get("metadata", {})),
+            processed_units=[str(value) for value in payload.get("processed_units", [])],
         )
 
 
 @dataclass
 class StageStateManifest:
-
-    stage_name: str
-    build_target: str
-    data_root: str
-    job_id: str = ""
-    status: str = ""
-    source_ids: list[str] = field(default_factory=list)
-    processed_source_ids: list[str] = field(default_factory=list)
-    artifact_paths: dict[str, str] = field(default_factory=dict)
-    input_node_stage: str = ""
-    input_edge_stage: str = ""
-    substages: dict[str, SubstageStateManifest] = field(default_factory=dict)
+    stage: str
+    inputs: list[str] = field(default_factory=list)
+    artifacts: list[str] = field(default_factory=list)
     updated_at: str = ""
+    unit: str = ""
     stats: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    processed_units: list[str] = field(default_factory=list)
+    substages: dict[str, SubstageStateManifest] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "stage_name": self.stage_name,
-            "build_target": self.build_target,
-            "data_root": self.data_root,
-            "job_id": self.job_id,
-            "status": self.status,
-            "source_ids": list(self.source_ids),
-            "processed_source_ids": list(self.processed_source_ids),
-            "artifact_paths": dict(self.artifact_paths),
-            "input_node_stage": self.input_node_stage,
-            "input_edge_stage": self.input_edge_stage,
-            "substages": {
-                name: state.to_dict()
-                for name, state in self.substages.items()
-            },
+        payload = {
+            "stage": self.stage,
+            "inputs": list(self.inputs),
+            "artifacts": list(self.artifacts),
             "updated_at": self.updated_at,
+            "unit": self.unit,
             "stats": dict(self.stats),
         }
+        if self.metadata:
+            payload["metadata"] = dict(self.metadata)
+        if self.substages:
+            payload["substages"] = {
+                name: state.to_dict()
+                for name, state in self.substages.items()
+            }
+        elif self.processed_units:
+            payload["processed_units"] = list(self.processed_units)
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "StageStateManifest":
         return cls(
-            stage_name=payload["stage_name"],
-            build_target=payload.get("build_target", ""),
-            data_root=payload.get("data_root", ""),
-            job_id=payload.get("job_id", ""),
-            status=payload.get("status", ""),
-            source_ids=[str(value) for value in payload.get("source_ids", [])],
-            processed_source_ids=[str(value) for value in payload.get("processed_source_ids", [])],
-            artifact_paths=dict(payload.get("artifact_paths", {})),
-            input_node_stage=payload.get("input_node_stage", ""),
-            input_edge_stage=payload.get("input_edge_stage", ""),
+            stage=str(payload["stage"]),
+            inputs=[str(value) for value in payload.get("inputs", [])],
+            artifacts=[str(value) for value in payload.get("artifacts", [])],
+            updated_at=str(payload.get("updated_at", "") or ""),
+            unit=str(payload.get("unit", "") or ""),
+            stats=dict(payload.get("stats", {})),
+            metadata=dict(payload.get("metadata", {})),
+            processed_units=[str(value) for value in payload.get("processed_units", [])],
             substages={
                 str(name): SubstageStateManifest.from_dict(item)
                 for name, item in payload.get("substages", {}).items()
             },
-            updated_at=payload.get("updated_at", ""),
-            stats=dict(payload.get("stats", {})),
         )

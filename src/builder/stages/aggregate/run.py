@@ -5,25 +5,25 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
-from ...contracts import ExtractInputRecord
-from ...contracts import ExtractConceptRecord
+from ...contracts import AggregateConceptRecord
 from ...pipeline.incremental import owner_document_by_node, owner_source_id_for_node
 from ...pipeline.runtime import PipelineRuntime
-from .llm import extract_concepts_batch, resolve_extract_runtime_config
-from .types import ExtractResult
+from .concepts import aggregate_concept_stats
+from .llm import aggregate_concepts_batch, resolve_aggregate_runtime_config
+from .types import AggregateInputRecord, AggregateResult
 
 
 def run(
     graph_bundle,
     runtime: PipelineRuntime,
     *,
-    inputs: list[ExtractInputRecord] | None = None,
+    inputs: list[AggregateInputRecord] | None = None,
     active_source_ids: set[str] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
     checkpoint_every: int = 0,
     checkpoint_callback: Callable[[list, dict[str, int], list[str], list[str], list[str], list[dict[str, object]]], None] | None = None,
     cancel_event: threading.Event | None = None,
-) -> ExtractResult:
+) -> AggregateResult:
     active_sources = {value for value in (active_source_ids or set()) if value}
     inputs = list(inputs or [])
     total_inputs = len(inputs)
@@ -32,7 +32,7 @@ def run(
     if not inputs:
         if progress_callback is not None:
             progress_callback(1, 1)
-        return ExtractResult(
+        return AggregateResult(
             inputs=[],
             concepts=[],
             processed_source_ids=sorted(active_sources),
@@ -50,7 +50,7 @@ def run(
             llm_errors=[],
         )
 
-    runtime_config = resolve_extract_runtime_config(runtime)
+    runtime_config = resolve_aggregate_runtime_config(runtime)
     node_index = {node.id: node for node in graph_bundle.nodes}
     owners = owner_document_by_node(graph_bundle)
     batches = build_document_batches(
@@ -67,7 +67,7 @@ def run(
     attempted_input_ids: set[str] = set()
     successful_input_ids: set[str] = set()
     llm_errors: list[dict[str, object]] = []
-    concepts_by_start: dict[int, list[ExtractConceptRecord]] = {}
+    concepts_by_start: dict[int, list[AggregateConceptRecord]] = {}
     completed_inputs = 0
     total_requests = 0
     retry_count = 0
@@ -76,11 +76,7 @@ def run(
     max_workers = max(1, min(runtime_config.concurrent_requests, len(batches) or 1))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_batch = {
-            executor.submit(
-                extract_concepts_batch,
-                runtime,
-                batch["inputs"],
-            ): (start, batch)
+            executor.submit(aggregate_concepts_batch, runtime, batch["inputs"]): (start, batch)
             for start, batch in enumerate(batches)
         }
         for future in as_completed(future_to_batch):
@@ -144,7 +140,7 @@ def run(
         input_owner_source_ids,
         source_ids_without_inputs,
     )
-    return ExtractResult(
+    return AggregateResult(
         inputs=inputs,
         concepts=concepts,
         processed_source_ids=processed_source_ids,
@@ -166,7 +162,7 @@ def run(
 def build_stats(
     *,
     inputs: list,
-    concepts: list,
+    concepts: list[AggregateConceptRecord],
     total_requests: int,
     retry_count: int,
     llm_errors: list[dict[str, object]],
@@ -176,6 +172,7 @@ def build_stats(
     failed_count = len(failed_input_ids)
     observed_completed = len(inputs) if completed_input_count is None else int(completed_input_count)
     succeeded_count = max(observed_completed - failed_count, 0)
+    concept_stats = aggregate_concept_stats(concepts)
     return {
         "work_units_total": len(inputs),
         "work_units_completed": succeeded_count,
@@ -183,34 +180,22 @@ def build_stats(
         "work_units_skipped": 0,
         "work_units_attempted": int(observed_completed),
         "input_count": len(inputs),
-        "result_count": len(concepts),
-        "concept_count": sum(len(row.concepts) for row in concepts),
+        **concept_stats,
         "llm_request_count": int(total_requests),
         "llm_error_count": len(llm_errors),
         "retry_count": int(retry_count),
     }
 
 
-def _flatten_concepts(concepts_by_start: dict[int, list[ExtractConceptRecord]]) -> list[ExtractConceptRecord]:
-    ordered: list[ExtractConceptRecord] = []
-    for start in sorted(concepts_by_start):
-        ordered.extend(concepts_by_start[start])
-    return ordered
-
-
-def _materialized_concepts(concepts_by_start: dict[int, list[ExtractConceptRecord]]) -> list[ExtractConceptRecord]:
-    return [row for row in _flatten_concepts(concepts_by_start) if list(getattr(row, "concepts", []))]
-
-
 def build_document_batches(
-    inputs: list[ExtractInputRecord],
+    inputs: list[AggregateInputRecord],
     *,
     owners: dict[str, str],
     node_index: dict[str, object],
     batch_size: int,
 ) -> list[dict[str, object]]:
     batches: list[dict[str, object]] = []
-    grouped: dict[str, list[ExtractInputRecord]] = {}
+    grouped: dict[str, list[AggregateInputRecord]] = {}
     document_order: list[str] = []
     for row in inputs:
         document_id = owners.get(row.id, row.id)
@@ -230,6 +215,17 @@ def build_document_batches(
                 }
             )
     return batches
+
+
+def _flatten_concepts(concepts_by_start: dict[int, list[AggregateConceptRecord]]) -> list[AggregateConceptRecord]:
+    ordered: list[AggregateConceptRecord] = []
+    for start in sorted(concepts_by_start):
+        ordered.extend(concepts_by_start[start])
+    return ordered
+
+
+def _materialized_concepts(concepts_by_start: dict[int, list[AggregateConceptRecord]]) -> list[AggregateConceptRecord]:
+    return [row for row in _flatten_concepts(concepts_by_start) if str(getattr(row, "id", "")).strip()]
 
 
 def _completed_source_ids(

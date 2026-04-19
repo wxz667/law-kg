@@ -5,11 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from ..contracts import (
+    AggregateConceptRecord,
     AlignPairRecord,
+    AlignRelationRecord,
     ClassifyPendingRecord,
     ConceptVectorRecord,
     EdgeRecord,
     EmbeddedConceptRecord,
+    EquivalenceRecord,
     ExtractConceptRecord,
     ExtractInputRecord,
     JobLogRecord,
@@ -71,7 +74,29 @@ def read_normalized_document(path: Path) -> NormalizedDocumentRecord:
 
 
 def write_normalize_index(path: Path, index: NormalizeStageIndex) -> None:
-    write_json(path, index.to_dict())
+    entries: list[dict[str, Any]] = []
+    succeeded_sources = 0
+    for entry in index.entries:
+        payload = entry.to_dict()
+        details = dict(payload.get("details", {}))
+        details.pop("reused", None)
+        payload["details"] = details
+        entries.append(payload)
+        if str(payload.get("status", "")) == "completed":
+            succeeded_sources += 1
+    write_json(
+        path,
+        {
+            "stage": index.stage,
+            "entries": entries,
+            "stats": {
+                "source_count": len(entries),
+                "succeeded_sources": succeeded_sources,
+                "failed_sources": len(entries) - succeeded_sources,
+                "reused_sources": 0,
+            },
+        },
+    )
 
 
 def read_normalize_index(path: Path) -> NormalizeStageIndex:
@@ -86,12 +111,20 @@ def read_stage_nodes(path: Path) -> list[NodeRecord]:
     return [NodeRecord.from_dict(row) for row in read_jsonl(path)]
 
 
+def read_stage_nodes_unchecked(path: Path) -> list[NodeRecord]:
+    return [NodeRecord.from_dict_unchecked(row) for row in read_jsonl(path)]
+
+
 def write_stage_edges(path: Path, edges: list[EdgeRecord]) -> None:
     write_jsonl(path, [edge.to_dict() for edge in edges])
 
 
 def read_stage_edges(path: Path) -> list[EdgeRecord]:
     return [EdgeRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def read_stage_edges_unchecked(path: Path) -> list[EdgeRecord]:
+    return [EdgeRecord.from_dict_unchecked(row) for row in read_jsonl(path)]
 
 
 def write_job_log(path: Path, manifest: JobLogRecord) -> None:
@@ -150,6 +183,14 @@ def read_extract_concepts(path: Path) -> list[ExtractConceptRecord]:
     return [ExtractConceptRecord.from_dict(row) for row in read_jsonl(path)]
 
 
+def write_aggregate_concepts(path: Path, rows: list[AggregateConceptRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_aggregate_concepts(path: Path) -> list[AggregateConceptRecord]:
+    return [AggregateConceptRecord.from_dict(row) for row in read_jsonl(path)]
+
+
 def write_embedded_concepts(path: Path, rows: list[EmbeddedConceptRecord]) -> None:
     write_jsonl(path, [row.to_dict() for row in rows])
 
@@ -172,6 +213,22 @@ def write_align_pairs(path: Path, rows: list[AlignPairRecord]) -> None:
 
 def read_align_pairs(path: Path) -> list[AlignPairRecord]:
     return [AlignPairRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def write_align_canonical_concepts(path: Path, rows: list[EquivalenceRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_align_canonical_concepts(path: Path) -> list[EquivalenceRecord]:
+    return [EquivalenceRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def write_align_relations(path: Path, rows: list[AlignRelationRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_align_relations(path: Path) -> list[AlignRelationRecord]:
+    return [AlignRelationRecord.from_dict(row) for row in read_jsonl(path)]
 
 
 def write_llm_judge_details(path: Path, rows: list[LlmJudgeDetailRecord]) -> None:

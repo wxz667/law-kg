@@ -64,14 +64,7 @@
       "type",
       "name",
       "level",
-      "text",
-      "order",
-      "candidate",
-      "alignment_status",
-      "normalized_text",
-      "aliases",
-      "normalized_values",
-      "source_members"
+      "description"
     ]
   },
   "edge_types": [
@@ -79,14 +72,16 @@
     "REFERENCES",
     "INTERPRETS",
     "MENTIONS",
-    "RELATED_TO"
+    "RELATED_TO",
+    "HAS_SUBORDINATE"
   ],
   "edge_type_categories": {
     "CONTAINS": "structural",
     "REFERENCES": "semantic",
     "INTERPRETS": "semantic",
     "MENTIONS": "semantic",
-    "RELATED_TO": "semantic"
+    "RELATED_TO": "semantic",
+    "HAS_SUBORDINATE": "semantic"
   },
   "structural_edges": [
     {
@@ -243,7 +238,35 @@
       "MENTIONS"
     ],
     "ConceptNode": [
-      "RELATED_TO"
+      "RELATED_TO",
+      "HAS_SUBORDINATE"
     ]
-  }
+  },
+  "semantic_edge_rules": [
+    {
+      "edge_type": "MENTIONS",
+      "source_type": "DocumentNode",
+      "target_type": "ConceptNode"
+    },
+    {
+      "edge_type": "MENTIONS",
+      "source_type": "TocNode",
+      "target_type": "ConceptNode"
+    },
+    {
+      "edge_type": "MENTIONS",
+      "source_type": "ProvisionNode",
+      "target_type": "ConceptNode"
+    },
+    {
+      "edge_type": "RELATED_TO",
+      "source_type": "ConceptNode",
+      "target_type": "ConceptNode"
+    },
+    {
+      "edge_type": "HAS_SUBORDINATE",
+      "source_type": "ConceptNode",
+      "target_type": "ConceptNode"
+    }
+  ]
 }

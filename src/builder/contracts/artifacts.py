@@ -264,19 +264,143 @@ class ExtractInputRecord:
 @dataclass(frozen=True)
 class ExtractConceptRecord:
     id: str
-    concepts: list[str]
+    concepts: list["ExtractConceptItem"]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "concepts": list(self.concepts),
+            "concepts": [item.to_dict() for item in self.concepts],
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ExtractConceptRecord":
         return cls(
             id=str(payload["id"]),
-            concepts=[str(value) for value in payload.get("concepts", []) if str(value).strip()],
+            concepts=[
+                ExtractConceptItem.from_dict(value)
+                for value in payload.get("concepts", [])
+                if isinstance(value, dict)
+            ],
+        )
+
+
+@dataclass(frozen=True)
+class ExtractConceptItem:
+    name: str
+    description: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ExtractConceptItem":
+        return cls(
+            name=str(payload.get("name", "")),
+            description=str(payload.get("description", "")),
+        )
+
+
+@dataclass(frozen=True)
+class AggregateSubordinateConcept:
+    concept: str
+    description: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "concept": self.concept,
+            "description": self.description,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "AggregateSubordinateConcept":
+        return cls(
+            concept=str(payload.get("concept", "")),
+            description=str(payload.get("description", "")),
+        )
+
+
+@dataclass(frozen=True)
+class AggregateCoreConcept:
+    concept: str
+    description: str
+    subordinates: list[AggregateSubordinateConcept]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "concept": self.concept,
+            "description": self.description,
+            "subordinates": [item.to_dict() for item in self.subordinates],
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "AggregateCoreConcept":
+        return cls(
+            concept=str(payload.get("concept", "")),
+            description=str(payload.get("description", "")),
+            subordinates=[
+                AggregateSubordinateConcept.from_dict(value)
+                for value in payload.get("subordinates", [])
+                if isinstance(value, dict)
+            ],
+        )
+
+
+@dataclass(frozen=True)
+class AggregateConceptRecord:
+    id: str
+    name: str
+    description: str
+    parent: str
+    root: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "parent": self.parent,
+            "root": self.root,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "AggregateConceptRecord":
+        return cls(
+            id=str(payload["id"]),
+            name=str(payload.get("name", "")),
+            description=str(payload.get("description", "")),
+            parent=str(payload.get("parent", "")),
+            root=str(payload.get("root", "")),
+        )
+
+
+@dataclass(frozen=True)
+class AlignConceptRecord:
+    id: str
+    name: str
+    description: str
+    parent: str
+    root: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "parent": self.parent,
+            "root": self.root,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "AlignConceptRecord":
+        return cls(
+            id=str(payload["id"]),
+            name=str(payload.get("name", "")),
+            description=str(payload.get("description", "")),
+            parent=str(payload.get("parent", "")),
+            root=str(payload.get("root", "")),
         )
 
 
@@ -325,19 +449,15 @@ class ConceptVectorRecord:
 class AlignPairRecord:
     left_id: str
     right_id: str
-    left_text: str
-    right_text: str
-    similarity: float
     relation: str
+    similarity: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "left_id": self.left_id,
             "right_id": self.right_id,
-            "left_text": self.left_text,
-            "right_text": self.right_text,
-            "similarity": float(self.similarity),
             "relation": self.relation,
+            "similarity": float(self.similarity),
         }
 
     @classmethod
@@ -345,9 +465,57 @@ class AlignPairRecord:
         return cls(
             left_id=str(payload["left_id"]),
             right_id=str(payload["right_id"]),
-            left_text=str(payload["left_text"]),
-            right_text=str(payload["right_text"]),
-            similarity=float(payload.get("similarity", 0.0)),
+            relation=str(payload.get("relation", "")),
+            similarity=float(payload.get("similarity", 0.0) or 0.0),
+        )
+
+
+@dataclass(frozen=True)
+class EquivalenceRecord:
+    id: str
+    name: str
+    description: str
+    member_ids: list[str]
+    root_ids: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "member_ids": list(self.member_ids),
+            "root_ids": list(self.root_ids),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "EquivalenceRecord":
+        return cls(
+            id=str(payload["id"]),
+            name=str(payload.get("name", "")),
+            description=str(payload.get("description", "")),
+            member_ids=[str(value) for value in payload.get("member_ids", []) if str(value).strip()],
+            root_ids=[str(value) for value in payload.get("root_ids", []) if str(value).strip()],
+        )
+
+
+@dataclass(frozen=True)
+class AlignRelationRecord:
+    left_id: str
+    right_id: str
+    relation: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "left_id": self.left_id,
+            "right_id": self.right_id,
+            "relation": self.relation,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "AlignRelationRecord":
+        return cls(
+            left_id=str(payload["left_id"]),
+            right_id=str(payload["right_id"]),
             relation=str(payload.get("relation", "")),
         )
 

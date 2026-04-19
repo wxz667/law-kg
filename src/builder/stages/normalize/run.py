@@ -35,7 +35,7 @@ def run(
     reused_count = 0
 
     if not force_rebuild and layout.normalize_index_path().exists():
-        existing_index = read_normalize_index(layout.normalize_index_path())
+        existing_index = strip_reused_markers(read_normalize_index(layout.normalize_index_path()))
         existing_by_source_id = {
             entry.source_id: entry
             for entry in existing_index.entries
@@ -46,7 +46,7 @@ def run(
     if progress_callback is not None:
         progress_callback(0, max(total_sources, 1))
     completed_progress = 0
-    existing_index = read_existing_normalize_index(layout.normalize_index_path())
+    existing_index = strip_reused_markers(read_existing_normalize_index(layout.normalize_index_path()))
 
     for source_id in missing_source_ids:
         entries.append(
@@ -104,9 +104,30 @@ def run(
 
 
 def can_reuse_entry(entry: NormalizeIndexEntry) -> bool:
-    if entry.status == "completed":
-        return bool(entry.artifact_path) and Path(entry.artifact_path).exists()
-    return True
+    return entry.status == "completed" and bool(entry.artifact_path) and Path(entry.artifact_path).exists()
+
+
+def strip_reused_markers(index: NormalizeStageIndex | None) -> NormalizeStageIndex | None:
+    if index is None:
+        return None
+    cleaned_entries: list[NormalizeIndexEntry] = []
+    for entry in index.entries:
+        cleaned_entry = NormalizeIndexEntry.from_dict(entry.to_dict())
+        cleaned_entry.details = dict(cleaned_entry.details)
+        cleaned_entry.details.pop("reused", None)
+        cleaned_entries.append(cleaned_entry)
+    success_count = sum(1 for entry in cleaned_entries if entry.status == "completed")
+    failed_count = len(cleaned_entries) - success_count
+    return NormalizeStageIndex(
+        stage=index.stage,
+        entries=cleaned_entries,
+        stats={
+            "source_count": len(cleaned_entries),
+            "succeeded_sources": success_count,
+            "failed_sources": failed_count,
+            "reused_sources": 0,
+        },
+    )
 
 
 def build_normalize_stage_index(entries: list[NormalizeIndexEntry], *, reused_count: int) -> NormalizeStageIndex:

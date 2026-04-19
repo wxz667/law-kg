@@ -72,16 +72,6 @@ def materialize_classify_results(
                     source=result.source_node_id,
                     target=target_node_id,
                     type=result.label,
-                    weight=resolve_edge_weight(result),
                 )
             )
     return deduplicate_graph(graph_bundle)
-
-
-def resolve_edge_weight(result: ClassifyRecord) -> float:
-    if result.source.startswith("rule_"):
-        return 1.0
-    score = min(max(float(result.score), 0.0), 1.0)
-    if result.label == "INTERPRETS":
-        return score
-    return 1.0 - score

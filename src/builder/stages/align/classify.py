@@ -8,22 +8,26 @@ from typing import Any, Callable
 
 from utils.llm.base import ProviderResponseError
 
-from ...contracts import AlignPairRecord
+from ...contracts import AlignConceptRecord, AlignPairRecord, EquivalenceRecord
 
 PROMPT = """判断法律概念对关系。
-输入：
-{"id": 1, "left_text": "概念A", "right_text": "概念B"}
-输出：
-{"id": 1, "relation": "equivalent"}
+输入示例：
+{"id":1,"left":{"name":"概念A","description":"描述A"},"right":{"name":"概念B","description":"描述B"}}
+
+输出示例：
+{"id":1,"relation":"equivalent"}
 
 relation 只能是：
-- equivalent: 表示两边概念在法律意义上等价，可以合并为同一节点，不要求完全等同，但必须在绝大多数语境下可以互换使用，不会引起歧义。
-- related: 表示两边概念在法律意义上相关但不等价
-- ignore: 表示两边概念在法律意义上不相关
+- equivalent：两边法律概念等价，可以合并
+- is_subordinate：左侧从属于右侧
+- has_subordinate：右侧从属于左侧
+- related：两边相关但不等价、也不是从属
+- none：两边不存在上述关系
 
 要求：
 1. 只返回合法 JSON 数组。
 2. 输出条数与输入一致，顺序一一对应。
+3. 不要输出额外字段。
 """
 
 
@@ -57,11 +61,11 @@ class AlignClassifyResult:
 
 
 def resolve_align_classify_runtime_config(runtime: Any) -> AlignClassifyRuntimeConfig:
-    payload = dict(runtime.align_config().get("classify", {}))
+    payload = dict(runtime.align_config().get("judge", {}))
     provider = str(payload.get("provider", "")).strip()
     model = str(payload.get("model", "")).strip()
     if not provider or not model:
-        raise ValueError("builder.align.classify must define non-empty provider and model.")
+        raise ValueError("builder.align.judge must define non-empty provider and model.")
     return AlignClassifyRuntimeConfig(
         provider=provider,
         model=model,
@@ -76,6 +80,8 @@ def resolve_align_classify_runtime_config(runtime: Any) -> AlignClassifyRuntimeC
 
 def classify_pairs(
     pairs: list[AlignPairRecord],
+    concepts: list[AlignConceptRecord],
+    equivalence: list[EquivalenceRecord],
     runtime: Any,
     *,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -83,7 +89,7 @@ def classify_pairs(
     checkpoint_callback: Callable[[list[AlignPairRecord], dict[str, int], list[str], list[dict[str, Any]]], None] | None = None,
     cancel_event: threading.Event | None = None,
 ) -> AlignClassifyResult:
-    pending_pairs = [row for row in pairs if row.relation == "pending"]
+    pending_pairs = [row for row in pairs if row.relation == ""]
     total_pending = len(pending_pairs)
     if progress_callback is not None:
         progress_callback(0, max(total_pending, 1))
@@ -97,6 +103,7 @@ def classify_pairs(
             llm_errors=[],
         )
 
+    semantics = build_semantics_lookup(concepts, equivalence)
     config = resolve_align_classify_runtime_config(runtime)
     request_config = runtime.build_request_config(
         {
@@ -119,29 +126,28 @@ def classify_pairs(
     total_requests = 0
     retry_count = 0
     next_checkpoint = max(int(checkpoint_every or 0), 0)
-
     max_workers = max(1, min(config.concurrent_requests, len(batches) or 1))
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_batch = {
-            executor.submit(classify_batch, runtime, batch, request_config, config.max_retries): batch
+            executor.submit(classify_batch, runtime, batch, request_config, config.max_retries, semantics): batch
             for batch in batches
         }
         for future in as_completed(future_to_batch):
             if cancel_event is not None and cancel_event.is_set():
                 raise KeyboardInterrupt
-            batch = future_to_batch[future]
             batch_result = future.result()
             llm_errors.extend(batch_result.errors)
             total_requests += int(batch_result.request_count)
             retry_count += int(batch_result.retry_count)
             if batch_result.failed_pair_ids:
                 raise ProviderResponseError(
-                    f"Align classify failed for pending pairs: {', '.join(batch_result.failed_pair_ids[:5])}"
+                    f"Align judge failed for pairs: {', '.join(batch_result.failed_pair_ids[:5])}"
                 )
-            for pair_id, relation in batch_result.records:
-                processed_relations[pair_id] = relation
-                processed_pair_ids.append(pair_id)
-            completed += len(batch)
+            for pair_id_value, relation in batch_result.records:
+                processed_relations[pair_id_value] = relation
+                processed_pair_ids.append(pair_id_value)
+            completed += len(future_to_batch[future])
             if progress_callback is not None:
                 progress_callback(completed, max(total_pending, 1))
             if checkpoint_callback is not None and checkpoint_every > 0:
@@ -163,8 +169,8 @@ def classify_pairs(
                         next_checkpoint += checkpoint_every
 
     updated_pairs = apply_classify_results(pairs, processed_relations)
-    if any(row.relation == "pending" for row in updated_pairs):
-        raise ValueError("Align classify completed with unresolved pending pairs.")
+    if any(row.relation == "" for row in updated_pairs):
+        raise ValueError("Align judge completed with unresolved pending pairs.")
     return AlignClassifyResult(
         pairs=updated_pairs,
         processed_pair_ids=sorted(dict.fromkeys(processed_pair_ids)),
@@ -173,17 +179,35 @@ def classify_pairs(
     )
 
 
+def build_semantics_lookup(
+    concepts: list[AlignConceptRecord],
+    equivalence: list[EquivalenceRecord],
+) -> dict[str, tuple[str, str]]:
+    lookup = {
+        row.id: (row.name, row.description)
+        for row in concepts
+    }
+    lookup.update(
+        {
+            row.id: (row.name, row.description)
+            for row in equivalence
+        }
+    )
+    return lookup
+
+
 def classify_batch(
     runtime: Any,
     batch: list[AlignPairRecord],
     request_config: Any,
     max_retries: int,
+    semantics: dict[str, tuple[str, str]],
 ) -> AlignClassifyBatchResult:
     errors: list[dict[str, Any]] = []
     pair_ids = [pair_id(row) for row in batch]
     for attempt in range(1, max_retries + 1):
         try:
-            prompt = build_classify_prompt(batch)
+            prompt = build_classify_prompt(batch, semantics)
             raw = runtime.generate_text(prompt, request_config)
             relations = parse_classify_response(raw, batch)
             return AlignClassifyBatchResult(
@@ -211,15 +235,21 @@ def classify_batch(
     )
 
 
-def build_classify_prompt(pairs: list[AlignPairRecord]) -> list[dict[str, str]]:
-    payload = [
-        {
-            "id": index,
-            "left_text": row.left_text,
-            "right_text": row.right_text,
-        }
-        for index, row in enumerate(pairs, start=1)
-    ]
+def build_classify_prompt(
+    pairs: list[AlignPairRecord],
+    semantics: dict[str, tuple[str, str]],
+) -> list[dict[str, str]]:
+    payload = []
+    for index, row in enumerate(pairs, start=1):
+        left_name, left_description = semantics.get(row.left_id, ("", ""))
+        right_name, right_description = semantics.get(row.right_id, ("", ""))
+        payload.append(
+            {
+                "id": index,
+                "left": {"name": left_name, "description": left_description},
+                "right": {"name": right_name, "description": right_description},
+            }
+        )
     user = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return [{"role": "system", "content": PROMPT}, {"role": "user", "content": user}]
 
@@ -228,28 +258,27 @@ def parse_classify_response(raw: str, pairs: list[AlignPairRecord]) -> dict[str,
     payload = decode_first_json_payload(strip_markdown_fence(raw))
     items = payload if isinstance(payload, list) else payload.get("items", [])
     if not isinstance(items, list):
-        raise ValueError("Align classify response must contain a list of items.")
+        raise ValueError("Align judge response must contain a list of items.")
     results: dict[str, str] = {}
+    allowed = {"equivalent", "is_subordinate", "has_subordinate", "related", "none"}
     for item in items:
         prompt_id = normalize_prompt_item_id(item.get("id"))
         if prompt_id is None or prompt_id <= 0 or prompt_id > len(pairs):
             continue
         relation = str(item.get("relation", "")).strip().lower()
-        if relation not in {"equivalent", "related", "ignore"}:
-            raise ValueError(f"Unsupported align classify relation: {relation or '<empty>'}")
+        if relation not in allowed:
+            raise ValueError(f"Unsupported align relation: {relation or '<empty>'}")
         results[pair_id(pairs[prompt_id - 1])] = relation
     missing = [pair_id(row) for row in pairs if pair_id(row) not in results]
     if missing:
-        raise ValueError(f"Align classify response is missing pair ids: {', '.join(missing[:5])}")
+        raise ValueError(f"Align judge response is missing pair ids: {', '.join(missing[:5])}")
     return results
 
 
 def apply_classify_results(pairs: list[AlignPairRecord], processed_relations: dict[str, str]) -> list[AlignPairRecord]:
     updated: list[AlignPairRecord] = []
     for row in pairs:
-        key = pair_id(row)
-        relation = processed_relations.get(key, row.relation)
-        updated.append(replace(row, relation=relation))
+        updated.append(replace(row, relation=processed_relations.get(pair_id(row), row.relation)))
     return updated
 
 
@@ -259,69 +288,46 @@ def build_classify_stats(
     retry_count: int,
     llm_errors: list[dict[str, Any]],
 ) -> dict[str, int]:
-    equivalent_count = sum(1 for row in pairs if row.relation == "equivalent")
-    related_count = sum(1 for row in pairs if row.relation == "related")
-    ignore_count = sum(1 for row in pairs if row.relation == "ignore")
-    pending_count = sum(1 for row in pairs if row.relation == "pending")
-    return {
+    counts = {
         "pair_count": len(pairs),
-        "equivalent_count": equivalent_count,
-        "related_count": related_count,
-        "ignore_count": ignore_count,
-        "pending_count": pending_count,
+        "pending_count": sum(1 for row in pairs if row.relation == ""),
+        "equivalent_count": sum(1 for row in pairs if row.relation == "equivalent"),
+        "is_subordinate_count": sum(1 for row in pairs if row.relation == "is_subordinate"),
+        "has_subordinate_count": sum(1 for row in pairs if row.relation == "has_subordinate"),
+        "related_count": sum(1 for row in pairs if row.relation == "related"),
+        "none_count": sum(1 for row in pairs if row.relation == "none"),
         "llm_request_count": int(total_requests),
-        "retry_count": int(retry_count),
         "llm_error_count": len(llm_errors),
+        "retry_count": int(retry_count),
     }
+    counts["result_count"] = counts["pair_count"]
+    return counts
 
 
-def summarize_llm_errors(errors: list[dict[str, Any]], *, limit: int = 10) -> list[dict[str, Any]]:
-    summarized: dict[tuple[str, str], dict[str, Any]] = {}
-    for item in errors:
-        error_type = str(item.get("error_type", "") or "")
-        message = str(item.get("message", "") or "")
-        key = (error_type, message)
-        entry = summarized.get(key)
-        if entry is None:
-            entry = {
-                "error_type": error_type,
-                "message": message,
-                "count": 0,
-                "pair_ids": [],
-            }
-            summarized[key] = entry
-        entry["count"] = int(entry["count"]) + 1
-        for pair_id_value in item.get("pair_ids", [])[:3]:
-            if pair_id_value not in entry["pair_ids"] and len(entry["pair_ids"]) < 3:
-                entry["pair_ids"].append(pair_id_value)
-    return sorted(summarized.values(), key=lambda item: (-int(item["count"]), str(item["error_type"])))[:limit]
+def pair_id(row: AlignPairRecord) -> str:
+    return f"{row.left_id}\t{row.right_id}"
 
 
-def strip_markdown_fence(content: str) -> str:
-    stripped = content.strip()
-    if stripped.startswith("```"):
-        lines = [line for line in stripped.splitlines() if not line.strip().startswith("```")]
-        return "\n".join(lines).strip()
-    return stripped
+def strip_markdown_fence(raw: str) -> str:
+    text = str(raw or "").strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 3 and lines[-1].strip() == "```":
+            return "\n".join(lines[1:-1]).strip()
+    return text
 
 
-def decode_first_json_payload(content: str) -> Any:
-    stripped = content.strip()
-    if not stripped:
-        raise json.JSONDecodeError("Empty content", content, 0)
-    decoder = json.JSONDecoder()
-    start_positions = [index for index, char in enumerate(stripped) if char in "[{"]
-    last_error: json.JSONDecodeError | None = None
-    for start in start_positions:
-        try:
-            payload, _end = decoder.raw_decode(stripped, idx=start)
-            return payload
-        except json.JSONDecodeError as exc:
-            last_error = exc
-            continue
-    if last_error is not None:
-        raise last_error
-    raise json.JSONDecodeError("No JSON object or array found", content, 0)
+def decode_first_json_payload(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        start = min([index for index in [raw.find("["), raw.find("{")] if index >= 0], default=-1)
+        if start < 0:
+            raise
+        end = max(raw.rfind("]"), raw.rfind("}"))
+        if end < start:
+            raise
+        return json.loads(raw[start : end + 1])
 
 
 def normalize_prompt_item_id(value: Any) -> int | None:
@@ -329,11 +335,31 @@ def normalize_prompt_item_id(value: Any) -> int | None:
         return None
     if isinstance(value, int):
         return value
-    if isinstance(value, float):
-        return int(value) if value.is_integer() else None
-    text = str(value).strip()
-    return int(text) if text.isdigit() else None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
-def pair_id(row: AlignPairRecord) -> str:
-    return f"{row.left_id}|{row.right_id}"
+def summarize_llm_errors(errors: list[dict[str, object]], *, limit: int = 10) -> list[dict[str, object]]:
+    summarized: dict[tuple[str, str], dict[str, object]] = {}
+    for item in errors:
+        error_type = str(item.get("error_type", "") or "")
+        message = str(item.get("message", "") or "")
+        key = (error_type, message)
+        entry = summarized.get(key)
+        if entry is None:
+            sample_ids = [str(value) for value in item.get("pair_ids", [])[:3]]
+            entry = {
+                "error_type": error_type,
+                "message": message,
+                "count": 0,
+                "sample_pair_ids": sample_ids,
+            }
+            summarized[key] = entry
+        entry["count"] = int(entry.get("count", 0)) + 1
+    ordered = sorted(
+        summarized.values(),
+        key=lambda item: (-int(item.get("count", 0)), str(item.get("error_type", "")), str(item.get("message", ""))),
+    )
+    return ordered[:limit]

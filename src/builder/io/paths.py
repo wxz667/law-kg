@@ -8,9 +8,8 @@ STAGE_OUTPUT_DIRS = {
     "detect": "03_detect",
     "classify": "04_classify",
     "extract": "05_extract",
-    "embed": "06_embed",
+    "aggregate": "06_aggregate",
     "align": "07_align",
-    "infer": "08_infer",
 }
 
 
@@ -38,8 +37,10 @@ class BuildLayout:
             return self.classify_results_path()
         if stage_name == "extract":
             return self.extract_concepts_path()
-        if stage_name == "embed":
-            return self.embed_concepts_path()
+        if stage_name == "aggregate":
+            return self.aggregate_concepts_path()
+        if stage_name == "align":
+            return self.stage_nodes_path("align")
         if self.stage_nodes_path(stage_name).exists():
             return self.stage_nodes_path(stage_name)
         return self.stage_edges_path(stage_name)
@@ -62,14 +63,20 @@ class BuildLayout:
     def extract_concepts_path(self) -> Path:
         return self.stage_dir("extract") / "concepts.jsonl"
 
-    def embed_concepts_path(self) -> Path:
-        return self.stage_dir("embed") / "concepts.jsonl"
+    def aggregate_concepts_path(self) -> Path:
+        return self.stage_dir("aggregate") / "concepts.jsonl"
 
-    def embed_vectors_path(self) -> Path:
-        return self.stage_dir("embed") / "vectors.jsonl"
+    def align_concepts_path(self) -> Path:
+        return self.stage_dir("align") / "concepts.jsonl"
+
+    def align_vectors_path(self) -> Path:
+        return self.stage_dir("align") / "vectors.jsonl"
 
     def align_pairs_path(self) -> Path:
         return self.stage_dir("align") / "pairs.jsonl"
+
+    def align_relations_path(self) -> Path:
+        return self.stage_dir("align") / "relations.jsonl"
 
     def normalize_documents_dir(self) -> Path:
         return self.stage_dir("normalize") / "documents"

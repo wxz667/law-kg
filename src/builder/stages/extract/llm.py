@@ -6,49 +6,41 @@ from typing import Any
 
 from utils.llm.base import ProviderRequestConfig, ProviderResponseError, build_provider_request_config, validate_provider_api_params
 
-from ...contracts import ExtractConceptRecord, ExtractInputRecord
-from .postprocess import postprocess_concept_list
+from ...contracts import ExtractConceptItem, ExtractConceptRecord, ExtractInputRecord
+from .postprocess import normalize_text, postprocess_concept_items
 
 PROMPT = """# 角色
 你是专业的法律知识图谱本体架构师。
 
 # 任务
-为给定的法律章节（JSON输入），提取出最能代表该章节核心的“宏观法律实体”，作为知识图谱的节点标识。
-- **数量限制**：必须强制收敛，每个章节仅提取 **1-5 个** 核心概念，绝对上限为 6 个。
-- **返回空值**：如果该章节只是细则补充或无核心实体，请勇敢地返回 `[]`。
+为给定的法律文本，提取出最能代表该文本核心的“宏观法律实体”，作为知识图谱的节点标识，并提供简要描述。
+- **数量限制**：必须强制收敛，每个章节仅提取 **1-6 个** 核心概念，绝对上限为 8 个。
+- **返回空值**：如果该章节无核心实体，请勇敢地返回 `[]`。
 
-# 核心概念的“正向画像”（你要找的东西长这样）
+# 核心概念的正向画像
 1. **法定制度名**：如“海难救助”、“宣告失踪”、“船舶融资租赁”、“民事诉讼简易程序”。
 2. **核心法律客体/主体**：如“危险货物”、“船舶所有权”、“遗产管理人”。
 3. **独立的法定状态**：如“财产无主”、“合同效力”。
 
-# 标准提取工作流（SOP）
+# 要求
+- 概念名称必须是有字面意涵的法律术语，禁止"xx法一般规定"“xxx术语”等无实际意义的名称。
+- 不要抽取法律名称、时间地点等具体对象
+- 不要抽取局部语义成立的概念，例如“本法”、“各级各类学校”等应当丢弃
+- 不要单独的处罚后果（罚款、拘留等,如果有必须包含前件）
+- 只保留核心术语“不安抗辩权”，清理冗余后缀（“定义”、“规定”、“法律”、“制度”、“机制”等）
+- 每个概念的描述请控制在 **30 - 100 字**。
+- 描述必须直接说明内容，不要写“是指 / 表示 / 定义为 / 系指 / 即”等废话开头。
+- 不要复制整句法条，不要写成长段解释，做总结归纳。
 
-**第一步：锚定领域（Hierarchy 限定）**
-读取 `hierarchy` 字段。如果提取出的概念是一个多领域通用的词汇，你**必须**将 `hierarchy` 中的领域词作为前缀补充上去（例如：将“管辖”转化为“民事诉讼地域管辖”）。
-注意抽取多个概念时，**每个概念都必须**进行领域锚定，不能只锚定其中一个。
-
-**第二步：向上聚合（寻找最大公约数）**
-当前是“章/节”级别的宏观视角。如果你发现自己想提取 5 个以上的概念，说明你陷入了底层细节！
-- 将一组连续的操作步骤向上归并为所属的程序。
-- 将一个制度的不同情形归并为该制度的核心名词。
-
-**第三步：原子术语化（剥离动态与修饰）**
-- 剔除底层的操作细则。
-- 剔除无意义的修饰后缀。
-- 如果同一组概念之间存在包含关系，请剔除掉被包含的那。
-
-# 排除项（不属于图谱节点的内容）
-- 不要带有具体的期限与数字计算（如：期间顺延、审限、十五日）。
-- 不要带有细微的执行程序碎片（如：送达回证、移送案件）。
-- 不要带有泛化的章节占位标题（如：一般规定、附则、其他情形）。
-- 不要带有单独的法律结果后件（如：罚款拘留）。
-
-# 输出格式
-仅返回如下严格的 JSON 数组格式，禁止输出任何多余的解释文本：
+# 输出格式和结果示例
+只返回严格 JSON 数组，不要输出任何额外说明：
 [
-  {"id":"输入id1","concepts":["主干概念1", "主干概念2"]},
-  {"id":"输入id2","concepts":[]} 
+  {
+    "id": 1,
+    "concepts": [
+      {"name": "不安抗辩权", "description": "在双务合同中，应当先履行债务的当事人，有确切证据证明对方丧失履行能力时，在对方恢复履行能力或提供担保前，有权中止履行合同"}
+    ]
+  }
 ]
 """
 
@@ -136,6 +128,15 @@ def extract_concepts_batch(
                     "input_ids": [row.id for row in inputs],
                 }
             )
+        except Exception as exc:
+            errors.append(
+                {
+                    "error_type": exc.__class__.__name__,
+                    "message": str(exc),
+                    "attempt": attempt,
+                    "input_ids": [row.id for row in inputs],
+                }
+            )
     return ExtractBatchResult(
         concepts=[],
         errors=errors,
@@ -156,19 +157,15 @@ def build_extract_prompt(inputs: list[ExtractInputRecord]) -> list[dict[str, str
         for row in inputs
     ]
     user = (
-        "请对以下法律结构单元输出概念数组。"
-        "返回时必须保留输入中的数字 id，不要改写成其他 id。"
-        "输出中不区分结构概念和内容概念，只返回统一的 concepts 数组。"
+        "请为以下法律结构单元输出结构化概念"
+        "严格遵守要求和输出格式"
         "\n"
         + json.dumps(payload, ensure_ascii=False)
     )
     return [{"role": "system", "content": PROMPT}, {"role": "user", "content": user}]
 
 
-def parse_extract_response(
-    raw: str,
-    inputs: list[ExtractInputRecord],
-) -> list[ExtractConceptRecord]:
+def parse_extract_response(raw: str, inputs: list[ExtractInputRecord]) -> list[ExtractConceptRecord]:
     payload = decode_first_json_payload(strip_markdown_fence(raw))
     items = payload if isinstance(payload, list) else payload.get("items", [])
     if not isinstance(items, list):
@@ -184,6 +181,7 @@ def parse_extract_response(
         if source_id is None:
             continue
         items_by_id[source_id] = item
+
     concepts: list[ExtractConceptRecord] = []
     for expected in inputs:
         item = items_by_id.get(expected.id)
@@ -192,16 +190,17 @@ def parse_extract_response(
         raw_concepts = item.get("concepts", [])
         if not isinstance(raw_concepts, list):
             raise ValueError(f"Extract response concepts for {expected.id} must be a list.")
-        concepts.append(
-            ExtractConceptRecord(
-                id=expected.id,
-                concepts=postprocess_concept_list([
-                    normalize_text(str(concept_item).strip())
-                    for concept_item in raw_concepts
-                    if normalize_text(str(concept_item).strip())
-                ]),
-            )
+        concept_items = postprocess_concept_items(
+            [
+                ExtractConceptItem(
+                    name=normalize_text(str(concept_item.get("name", ""))),
+                    description=normalize_text(str(concept_item.get("description", ""))),
+                )
+                for concept_item in raw_concepts
+                if isinstance(concept_item, dict)
+            ]
         )
+        concepts.append(ExtractConceptRecord(id=expected.id, concepts=concept_items))
     return concepts
 
 
@@ -230,10 +229,6 @@ def decode_first_json_payload(content: str) -> Any:
     if last_error is not None:
         raise last_error
     raise json.JSONDecodeError("No JSON object or array found", content, 0)
-
-
-def normalize_text(text: str) -> str:
-    return " ".join(text.split())
 
 
 def build_prompt_id_map(inputs: list[ExtractInputRecord]) -> dict[str, int]:

@@ -100,7 +100,13 @@ def extract_candidates(
             )
 
     alias_map = aliases or {}
-    relevant_aliases = alias_items or sorted(alias_map.items(), key=lambda item: len(item[0]), reverse=True)
+    # Preserve an explicitly computed empty alias list so we do not fall back to
+    # scanning every alias for sentences that have no relevant alias hits.
+    relevant_aliases = (
+        sorted(alias_map.items(), key=lambda item: len(item[0]), reverse=True)
+        if alias_items is None
+        else alias_items
+    )
     if has_article_marker and relevant_aliases:
         for alias, full_title in relevant_aliases:
             pattern = compile_alias_pattern(alias)
