@@ -12,7 +12,7 @@
 - 检测显式法条引用候选，并结合规则、解释关系分类模型与可选 LLM 仲裁生成 `REFERENCES` / `INTERPRETS` 边
 - 基于图快照构建章节级概念抽取输入，使用 LLM 抽取并聚合概念
 - 对 raw 概念执行 embedding、召回、LLM 判别和 canonical 对齐，生成 `ConceptNode`、`MENTIONS`、`RELATED_TO`、`HAS_SUBORDINATE`
-- 在 canonical 概念图上执行两轮隐式关系召回和判别，补充最终概念关系
+- 在 canonical 概念图上执行多轮隐式关系召回和判别，补充最终概念关系
 - 为 `interprets_filter` 模型构建训练数据、蒸馏标签、训练分类器，并管理 Hugging Face 模型与数据集资产
 
 ## 架构概览
@@ -38,7 +38,7 @@ data/
   intermediate/        # 中间产物
   manifest/            # 阶段累计状态
   train/               # 训练数据
-  exports/json/        # 最终图谱 JSONL
+  exports/             # 导出的图谱 JSONL
 logs/
   builder/             # builder 单次运行日志
   crawler/             # crawler 运行日志
@@ -81,20 +81,32 @@ scripts/crawler --category 法律 --data-root data
 
 - `--category`: 单个分类名或 `all`，支持 `宪法`、`法律`、`行政法规`、`监察法规`、`地方法规`、`司法解释`
 - `--metadata`: 仅抓取元数据
-- `--docs`: 仅下载文档
+- `--document`: 仅下载文档
 - `--overwrite`: 覆盖已存在的元数据和文档
 - `--limit`: 每个分类最多处理的记录数
-- `--concurrency`、`--retries`、`--timeout`: 网络并发与重试参数
+- `--data-root`: 覆盖 `crawler.data_root`，并在未显式传目录参数时使用 `{data-root}/source/metadata` 与 `{data-root}/source/documents`
+- `--base-url`: 覆盖 `crawler.base_url`
+- `--metadata-dir`、`--document-dir`: 覆盖 `configs/config.json` 中的 crawler 输出目录
+- `--metadata-shard-size`: 每个 metadata 分片最多存储的记录数
+- `--concurrency`、`--retries`、`--timeout`、`--request-delay`、`--request-jitter`、`--warmup-timeout`: 覆盖 `configs/config.json` 中的网络并发、节流与重试参数
 
 采集产物写入：
 
-- `data/source/metadata/metadata-*.json`
-- `data/source/docs/*.docx`
+- `crawler.metadata_dir` 指向的 `metadata-*.json`
+- `crawler.document_dir` 指向的 `*.docx`
 - `logs/crawler/`
 
 `crawler` 会按标题生成合法文件名；标题重复时追加 `source_id` 后缀。元数据按标题去重，保留发布日期、生效日期和 `source_id` 排序更靠后的记录。
 
 ## Builder 流水线
+
+builder 的输入/产物路径由 `configs/config.json` 的 `builder` 顶层配置控制：
+
+- `data`: builder 中间产物、manifest 和默认导出的数据根目录
+- `metadata`: normalize 阶段读取的 metadata JSON 目录
+- `document`: normalize 阶段读取的原始 DOCX 目录
+
+`data` 与原始输入目录相互独立；CLI 的 `--data-root` 只覆盖 `builder.data`，不会改写 `metadata` 或 `document`。
 
 builder 当前固定为八个阶段：
 
@@ -109,7 +121,7 @@ builder 当前固定为八个阶段：
 
 阶段职责：
 
-- `normalize`: 读取 `data/source/metadata/*.json` 与 `data/source/docs/*.docx`，生成清洗后的逻辑文档和 normalize 索引
+- `normalize`: 读取 `builder.metadata` 与 `builder.document` 指向的原始输入，生成清洗后的逻辑文档和 normalize 索引
 - `structure`: 构建 `DocumentNode`、`TocNode`、`ProvisionNode` 与 `CONTAINS` 结构边
 - `detect`: 从结构节点文本中扫描显式引用候选
 - `classify`: 对候选引用进行模型判别、规则修正和可选 LLM 仲裁，生成显式关系边
@@ -175,7 +187,16 @@ scripts/build \
 scripts/builder build --data-root data --all
 ```
 
-当前 `builder.cli` 只公开 `build` 命令。仓库中存在 `split_graph_export` 函数和 `scripts/split_export` 脚本，但 `split-export` 命令尚未接入 CLI，因此不要把该脚本作为当前可用导出入口。
+从已有阶段产物导出当前可用图谱，不进入构建流程：
+
+```bash
+scripts/export --stage infer --target data/exports
+scripts/export --target data/exports
+```
+
+未传 `--stage` 时会按 `infer -> align -> classify -> structure` 选择磁盘上最新可用图产物。导出结果写入 `{target}/nodes.jsonl` 与 `{target}/edges.jsonl`。
+
+脚本入口的完整说明见 [scripts/README.md](scripts/README.md)。
 
 ## 图谱 schema
 
@@ -204,7 +225,7 @@ builder 不在构建阶段写数据库，正式产物均为 JSON 或 JSONL。
 ```text
 data/intermediate/builder/01_normalize/
   documents/{source_id}.json
-  normalize_index.json
+  index.json
 
 data/intermediate/builder/02_structure/
   nodes.jsonl
@@ -241,7 +262,7 @@ data/intermediate/builder/08_infer/
   nodes.jsonl
   edges.jsonl
 
-data/exports/json/
+data/exports/
   nodes.jsonl
   edges.jsonl
 ```
@@ -255,7 +276,7 @@ data/exports/json/
 构建数据集并训练：
 
 ```bash
-scripts/interprets_filter \
+scripts/interprets-filter \
   --stage all \
   --data-root data \
   --model-dir models/interprets_filter
@@ -264,13 +285,13 @@ scripts/interprets_filter \
 仅构建数据集：
 
 ```bash
-scripts/interprets_filter --stage dataset --sample-size 1500 --data-root data
+scripts/interprets-filter --stage dataset --sample-size 1500 --data-root data
 ```
 
 仅训练：
 
 ```bash
-scripts/interprets_filter --stage train --data-root data --model-dir models/interprets_filter
+scripts/interprets-filter --stage train --data-root data --model-dir models/interprets_filter
 ```
 
 单条预测需要直接调用 CLI 的 `predict` 子命令：
@@ -284,11 +305,11 @@ uv run --no-sync python -m interprets_filter.cli predict \
 
 ## 模型资产
 
-模型和训练数据资产入口为 `scripts/model_asset`，当前支持资产名 `interprets_filter`。
+模型和训练数据资产入口为 `scripts/model-asset`，当前支持资产名 `interprets_filter`。
 
 ```bash
-scripts/model_asset --download interprets_filter --model
-scripts/model_asset --publish interprets_filter --dataset
+scripts/model-asset --download interprets_filter --model
+scripts/model-asset --publish interprets_filter --dataset
 ```
 
 远端仓库、revision、默认本地目录来自 `configs/config.json` 的 `interprets_filter.hub` 与 `interprets_filter.predict.default_model_dir`。

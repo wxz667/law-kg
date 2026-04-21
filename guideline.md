@@ -14,7 +14,7 @@
 
 ## 项目目标
 
-项目目标是把 `data/source/metadata/*.json` 与 `data/source/docs/*.docx` 中维护的中文规范性文件转换为稳定、可增量构建、可导入下游系统的法律知识图谱 JSONL 产物。
+项目目标是把 `configs/config.json` 中 `builder.metadata` 与 `builder.document` 指向的中文规范性文件输入转换为稳定、可增量构建、可导入下游系统的法律知识图谱 JSONL 产物。
 
 构建主链路固定为：
 
@@ -49,8 +49,8 @@
 
 builder 原始输入为：
 
-- `data/source/metadata/*.json`
-- `data/source/docs/*.docx`
+- `builder.metadata` 指向的 metadata JSON 目录
+- `builder.document` 指向的原始 DOCX 目录
 
 metadata 文件契约：
 
@@ -85,6 +85,18 @@ builder 配置：
 - LLM 子阶段使用 `provider`、`model`、`batch_size`、`concurrent_requests`、`request_timeout_seconds`、`max_retries`、`rate_limit`、`params`
 - `params` 只能包含供应商 API 参数，不能包含本地控制参数，例如 `timeout_seconds`、`max_retries`、`rpm`、`tpm`
 
+crawler 配置：
+
+- `crawler.base_url` 指向国家法律法规数据库站点根地址
+- `crawler.metadata_dir` 指向 metadata 分片输出目录
+- `crawler.document_dir` 指向 DOCX 文档输出目录
+- `crawler.metadata_shard_size` 控制每个 metadata 分片最多存储的记录数
+- `crawler.concurrency`、`crawler.retries`、`crawler.timeout` 控制并发、重试次数和请求超时
+- `crawler.request_delay`、`crawler.request_jitter` 控制相邻 FLK 请求之间的最小间隔和随机抖动
+- `crawler.warmup_timeout` 控制启动预热页面请求超时，`crawler.bootstrap_api_probe` 控制是否额外探测 `aggregateData`
+- CLI 中同名路径与运行参数优先级高于 `configs/config.json`
+- CLI 传入 `--data-root` 时，若未显式传 `--metadata-dir` 或 `--document-dir`，source 输出目录随 data root 切换
+
 供应商适配：
 
 - `provider=deepseek` 需要 `DEEPSEEK_API_KEY` 和 `DEEPSEEK_BASE_URL`
@@ -112,10 +124,10 @@ scripts/crawler --category 法律 --data-root data
 
 行为：
 
-- 默认同时运行 metadata 和 docs 两个阶段
+- 默认同时运行 metadata 和 document 两个阶段
 - `--metadata` 仅运行 metadata
-- `--docs` 仅运行 docs
-- `--overwrite` 同时覆盖 metadata 和 docs
+- `--document` 仅运行 document
+- `--overwrite` 同时覆盖 metadata 和 document
 - `--limit` 限制每个分类处理数量
 
 ### builder
@@ -142,20 +154,21 @@ scripts/builder build --data-root data --all
 - `--rebuild`: 强制重建选中作用域内的阶段，执行前要求输入 `yes`
 - `--incremental`: 显式使用默认增量合并与跳过行为；当前代码中不附加额外行为
 
-当前限制：
+导出命令：
 
-- `builder.cli` 未公开 `split-export` 命令
-- `scripts/split_export` 当前会调用未接入的 CLI 命令，不应作为可用入口记录在使用文档中
-- `split_graph_export()` 函数存在于 `src/builder/cli.py`，但需要后续接入 CLI 后才可作为正式功能使用
+- `scripts/export --target data/exports` 从已有阶段产物导出最新可用图
+- `scripts/export --stage classify --target data/exports` 导出指定阶段视角下可支持的图
+- 未传 `--stage` 时按 `infer -> align -> classify -> structure` 选择最新可用图
+- `export` 只读取阶段产物并写 `{target}/nodes.jsonl` 与 `{target}/edges.jsonl`，不进入 build 流程
 
 ### interprets_filter
 
-`scripts/interprets_filter` 固定调用 `interprets_filter.cli run`：
+`scripts/interprets-filter` 固定调用 `interprets_filter.cli run`：
 
 ```bash
-scripts/interprets_filter --stage all --data-root data --model-dir models/interprets_filter
-scripts/interprets_filter --stage dataset --sample-size 1500 --data-root data
-scripts/interprets_filter --stage train --data-root data --model-dir models/interprets_filter
+scripts/interprets-filter --stage all --data-root data --model-dir models/interprets_filter
+scripts/interprets-filter --stage dataset --sample-size 1500 --data-root data
+scripts/interprets-filter --stage train --data-root data --model-dir models/interprets_filter
 ```
 
 单条预测必须直接调用 `predict` 子命令：
@@ -169,15 +182,15 @@ uv run --no-sync python -m interprets_filter.cli predict --text "依据[T]某法
 当前支持资产名 `interprets_filter`。
 
 ```bash
-scripts/model_asset --download interprets_filter --model
-scripts/model_asset --publish interprets_filter --dataset
+scripts/model-asset --download interprets_filter --model
+scripts/model-asset --publish interprets_filter --dataset
 ```
 
 ## Builder 阶段总览
 
 | 阶段 | 工作单元 | 主要输入 | 主要输出 |
 | --- | --- | --- | --- |
-| `normalize` | `source` | metadata、docs | `documents/{source_id}.json`、`normalize_index.json` |
+| `normalize` | `source` | metadata、docs | `documents/{source_id}.json`、`index.json` |
 | `structure` | `source` | normalize documents/index | `nodes.jsonl`、`edges.jsonl` |
 | `detect` | `node` | structure graph | `candidates.jsonl` |
 | `classify` | `candidate` | detect candidates、structure graph | `results.jsonl`、`pending.jsonl`、`llm_judgments.jsonl`、`edges.jsonl` |
@@ -275,7 +288,7 @@ manifest `stats` 只能记录正式产物统计。以下运行态字段不得进
 
 各阶段允许字段：
 
-- `normalize`: `document_count`
+- `normalize`: `total_count`、`type_counts`
 - `structure`: `node_count`、`edge_count`、`node_type_counts`、`edge_type_counts`
 - `detect`: `candidate_count`
 - `classify`: `result_count`、`edge_count`、`edge_type_counts`、`interprets_count`、`references_count`、`ordinary_reference_count`、`judicial_interprets_count`、`judicial_references_count`
@@ -400,7 +413,7 @@ graph stage 完成后，job log 或 stage log 可记录：
 
 职责：
 
-- 扫描 `data/source/metadata/*.json`
+- 扫描 `builder.metadata` 指向的 metadata JSON
 - 根据 metadata 查找对应 `DOCX`
 - 读取段落、表格和自动编号文本
 - 清理不可见字符、异常空白、目录残留、封面残留和尾部形式化落款
@@ -409,7 +422,7 @@ graph stage 完成后，job log 或 stage log 可记录：
 正式产物：
 
 - `data/intermediate/builder/01_normalize/documents/{source_id}.json`
-- `data/intermediate/builder/01_normalize/normalize_index.json`
+- `data/intermediate/builder/01_normalize/index.json`
 
 `documents/{source_id}.json` 字段：
 
@@ -423,7 +436,7 @@ manifest：
 
 - `unit=source`
 - `processed_units` 为完成 normalize 的 `source_id`
-- `stats.document_count` 为当前累计文档数
+- `stats.total_count` 为当前累计文档数，`stats.type_counts` 为各类型文档数
 
 ### 2. structure
 
@@ -750,7 +763,7 @@ manifest：
 
 ## 中间产物接口矩阵
 
-- `normalize -> structure`: `01_normalize/documents/`、`01_normalize/normalize_index.json`
+- `normalize -> structure`: `01_normalize/documents/`、`01_normalize/index.json`
 - `structure -> detect`: `02_structure/nodes.jsonl`、`02_structure/edges.jsonl`
 - `detect -> classify`: `03_detect/candidates.jsonl`、`02_structure` 图
 - `classify -> extract`: `04_classify` 图快照
@@ -760,10 +773,16 @@ manifest：
 
 ## 最终导出规约
 
-当 `through_stage` 是图阶段时，orchestrator 会把当前图快照写入：
+当 `through_stage` 是图阶段时，orchestrator 会把当前图快照写入 BuildLayout 定义的 final graph 路径。需要从已有阶段产物导出图时，使用：
 
-- `data/exports/json/nodes.jsonl`
-- `data/exports/json/edges.jsonl`
+```bash
+scripts/export --stage infer --target data/exports
+```
+
+该命令写入：
+
+- `data/exports/nodes.jsonl`
+- `data/exports/edges.jsonl`
 
 图阶段包括：
 

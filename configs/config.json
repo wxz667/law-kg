@@ -1,4 +1,20 @@
 {
+  "crawler": {
+    "data_root": "data",
+    "base_url": "https://flk.npc.gov.cn",
+    "metadata_dir": "data/source/metadata",
+    "document_dir": "data/source/documents",
+    "metadata_shard_size": 5000,
+    "concurrency": 2,
+    "retries": 3,
+    "timeout": 10.0,
+    "request_delay": 0.3,
+    "request_jitter": 0.5,
+    "warmup_timeout": 5.0,
+    "bootstrap_api_probe": false,
+    "page_size": 100,
+    "checkpoint_every": 100
+  },
   "builder": {
     "data": "data",
     "metadata": "data/source/metadata",

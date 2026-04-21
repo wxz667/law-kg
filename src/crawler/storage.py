@@ -14,12 +14,19 @@ MAX_FILENAME_BYTES = 255
 
 
 class CrawlerStorage:
-    def __init__(self, data_root: Path, metadata_shard_size: int = 1000) -> None:
+    def __init__(
+        self,
+        data_root: Path,
+        *,
+        metadata_dir: Path | None = None,
+        document_dir: Path | None = None,
+        metadata_shard_size: int = 1000,
+    ) -> None:
         self.data_root = data_root
-        self.docs_dir = self.data_root / "source" / "docs"
-        self.metadata_dir = self.data_root / "source" / "metadata"
+        self.docs_dir = document_dir or self.data_root / "source" / "documents"
+        self.metadata_dir = metadata_dir or self.data_root / "source" / "metadata"
         self.logs_dir = self.data_root.parent / "logs" / "crawler"
-        self.metadata_shard_size = metadata_shard_size
+        self.metadata_shard_size = max(int(metadata_shard_size), 1)
 
     def ensure_directories(self) -> None:
         self.docs_dir.mkdir(parents=True, exist_ok=True)

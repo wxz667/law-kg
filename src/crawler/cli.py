@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from .client import FlkClient
 from .flk_api import FlkApi
@@ -22,6 +24,7 @@ GREEN = "\033[32m"
 RED = "\033[31m"
 YELLOW = "\033[33m"
 DIM = "\033[2m"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "config.json"
 
 
 def colorize(text: str, color: str, *, enabled: bool) -> str:
@@ -172,39 +175,113 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Crawl FLK metadata and docx documents.")
     parser.add_argument("--category", default="all", help="One category name or 'all'.")
     add_common_arguments(parser)
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing metadata and docs for selected stages.")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing metadata and documents for selected stages.")
     parser.add_argument("--metadata", action="store_true", help="Run metadata stage.")
-    parser.add_argument("--docs", action="store_true", help="Run docs stage.")
+    parser.add_argument("--document", action="store_true", help="Run document stage.")
+    parser.add_argument("--docs", dest="document", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--data-root", default="data", help="Path to the project data directory.")
-    parser.add_argument("--concurrency", type=int, default=6, help="Max concurrent item workers.")
-    parser.add_argument("--retries", type=int, default=4, help="Max retries per network request.")
-    parser.add_argument("--timeout", type=float, default=20.0, help="Request timeout in seconds.")
-    parser.add_argument("--metadata-shard-size", type=int, default=1000, help="Records per metadata shard.")
-    parser.add_argument("--page-size", type=int, default=20, help="Category list page size.")
-    parser.add_argument("--batch", type=int, default=50, help="Flush metadata index to disk every N records.")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to the project config file.")
+    parser.add_argument("--data-root", help="Override crawler.data_root from configs/config.json.")
+    parser.add_argument("--base-url", help="Override crawler.base_url from configs/config.json.")
+    parser.add_argument("--metadata-dir", help="Override crawler.metadata_dir from configs/config.json.")
+    parser.add_argument("--document-dir", help="Override crawler.document_dir from configs/config.json.")
+    parser.add_argument("--concurrency", type=int, help="Max concurrent item workers.")
+    parser.add_argument("--retries", type=int, help="Max retries per network request.")
+    parser.add_argument("--timeout", type=float, help="Request timeout in seconds.")
+    parser.add_argument("--request-delay", type=float, help="Minimum delay between FLK requests in seconds.")
+    parser.add_argument("--request-jitter", type=float, help="Additional random delay between FLK requests in seconds.")
+    parser.add_argument("--warmup-timeout", type=float, help="Warm-up page request timeout in seconds.")
+    parser.add_argument("--bootstrap-api-probe", action="store_true", help="Probe aggregateData during client bootstrap.")
+    parser.add_argument("--metadata-shard-size", type=int, help="Records per metadata shard.")
+    parser.add_argument("--page-size", type=int, help="Category list page size.")
+    parser.add_argument("--batch", type=int, help="Flush metadata index to disk every N records.")
     parser.add_argument("--limit", type=int, help="Optional max number of records to process per category.")
 
 
-async def run_command(args: argparse.Namespace) -> int:
-    run_metadata = args.metadata or not args.docs
-    run_docs = args.docs or not args.metadata
-    config = CrawlerConfig(
-        data_root=Path(args.data_root),
+def load_crawler_config(config_path: Path) -> CrawlerConfig:
+    path = config_path.resolve()
+    payload: dict[str, Any] = {}
+    if path.exists():
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            crawler = loaded.get("crawler", {})
+            payload = dict(crawler) if isinstance(crawler, dict) else {}
+    elif config_path != DEFAULT_CONFIG_PATH:
+        raise FileNotFoundError(f"Missing config file: {path}")
+
+    data_root = resolve_config_path(payload.get("data_root", "data"))
+    metadata_dir = resolve_config_path(payload["metadata_dir"]) if str(payload.get("metadata_dir", "")).strip() else None
+    document_dir = resolve_config_path(payload["document_dir"]) if str(payload.get("document_dir", "")).strip() else None
+    return CrawlerConfig(
+        data_root=data_root,
+        base_url=str(payload.get("base_url", "https://flk.npc.gov.cn") or "https://flk.npc.gov.cn").rstrip("/"),
+        metadata_dir=metadata_dir,
+        document_dir=document_dir,
+        concurrency=max(int(payload.get("concurrency", 2) or 2), 1),
+        retries=max(int(payload.get("retries", 3) or 3), 1),
+        timeout=max(float(payload.get("timeout", 10.0) or 10.0), 0.1),
+        request_delay=max(float(payload.get("request_delay", 0.3) or 0.3), 0.0),
+        request_jitter=max(float(payload.get("request_jitter", 0.5) or 0.5), 0.0),
+        warmup_timeout=max(float(payload.get("warmup_timeout", 5.0) or 5.0), 0.1),
+        bootstrap_api_probe=bool(payload.get("bootstrap_api_probe", False)),
+        metadata_shard_size=max(int(payload.get("metadata_shard_size", 1000) or 1000), 1),
+        page_size=max(int(payload.get("page_size", 20) or 20), 1),
+        checkpoint_every=max(int(payload.get("checkpoint_every", 50) or 50), 1),
+    )
+
+
+def apply_cli_overrides(config: CrawlerConfig, args: argparse.Namespace) -> CrawlerConfig:
+    data_root_overridden = bool(args.data_root)
+    data_root = resolve_config_path(args.data_root) if data_root_overridden else config.data_root
+    metadata_dir = config.metadata_dir
+    document_dir = config.document_dir
+    if data_root_overridden:
+        metadata_dir = data_root / "source" / "metadata"
+        document_dir = data_root / "source" / "documents"
+    return CrawlerConfig(
+        data_root=data_root,
+        base_url=str(args.base_url or config.base_url).rstrip("/"),
+        metadata_dir=resolve_config_path(args.metadata_dir) if args.metadata_dir else metadata_dir,
+        document_dir=resolve_config_path(args.document_dir) if args.document_dir else document_dir,
         overwrite_metadata=args.overwrite,
         overwrite_docs=args.overwrite,
-        concurrency=args.concurrency,
-        retries=args.retries,
-        timeout=args.timeout,
-        metadata_shard_size=args.metadata_shard_size,
-        page_size=args.page_size,
-        checkpoint_every=args.batch,
+        concurrency=max(args.concurrency if args.concurrency is not None else config.concurrency, 1),
+        retries=max(args.retries if args.retries is not None else config.retries, 1),
+        timeout=max(args.timeout if args.timeout is not None else config.timeout, 0.1),
+        request_delay=max(args.request_delay if args.request_delay is not None else config.request_delay, 0.0),
+        request_jitter=max(args.request_jitter if args.request_jitter is not None else config.request_jitter, 0.0),
+        warmup_timeout=max(args.warmup_timeout if args.warmup_timeout is not None else config.warmup_timeout, 0.1),
+        bootstrap_api_probe=args.bootstrap_api_probe or config.bootstrap_api_probe,
+        metadata_shard_size=max(
+            args.metadata_shard_size if args.metadata_shard_size is not None else config.metadata_shard_size,
+            1,
+        ),
+        page_size=max(args.page_size if args.page_size is not None else config.page_size, 1),
+        checkpoint_every=max(args.batch if args.batch is not None else config.checkpoint_every, 1),
         limit=args.limit,
     )
-    storage = CrawlerStorage(config.data_root, metadata_shard_size=config.metadata_shard_size)
+
+
+def resolve_config_path(value: Any) -> Path:
+    path = Path(str(value).strip())
+    if not str(path):
+        raise ValueError("Crawler path configuration cannot be empty.")
+    return path if path.is_absolute() else (DEFAULT_CONFIG_PATH.parents[1] / path).resolve()
+
+
+async def run_command(args: argparse.Namespace) -> int:
+    run_metadata = args.metadata or not args.document
+    run_docs = args.document or not args.metadata
+    config = apply_cli_overrides(load_crawler_config(Path(args.config)), args)
+    storage = CrawlerStorage(
+        config.data_root,
+        metadata_dir=config.metadata_dir,
+        document_dir=config.document_dir,
+        metadata_shard_size=config.metadata_shard_size,
+    )
     storage.ensure_directories()
     logger = RunLogger(
         storage.logs_dir,
@@ -212,7 +289,15 @@ async def run_command(args: argparse.Namespace) -> int:
         arguments=vars(args),
     )
 
-    async with FlkClient("https://flk.npc.gov.cn", timeout=config.timeout, retries=config.retries) as client:
+    async with FlkClient(
+        config.base_url,
+        timeout=config.timeout,
+        retries=config.retries,
+        request_delay=config.request_delay,
+        request_jitter=config.request_jitter,
+        warmup_timeout=config.warmup_timeout,
+        bootstrap_api_probe=config.bootstrap_api_probe,
+    ) as client:
         api = FlkApi(client)
         reporter = ProgressReporter()
         await reporter.start()
@@ -244,7 +329,11 @@ async def run_command(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    return asyncio.run(run_command(args))
+    try:
+        return asyncio.run(run_command(args))
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

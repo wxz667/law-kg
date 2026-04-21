@@ -87,11 +87,18 @@ class PageResult:
 @dataclass(slots=True)
 class CrawlerConfig:
     data_root: Path
+    base_url: str = "https://flk.npc.gov.cn"
+    metadata_dir: Path | None = None
+    document_dir: Path | None = None
     overwrite_metadata: bool = False
     overwrite_docs: bool = False
-    concurrency: int = 6
-    retries: int = 4
-    timeout: float = 20.0
+    concurrency: int = 2
+    retries: int = 3
+    timeout: float = 10.0
+    request_delay: float = 0.3
+    request_jitter: float = 0.5
+    warmup_timeout: float = 5.0
+    bootstrap_api_probe: bool = False
     metadata_shard_size: int = 1000
     page_size: int = 20
     checkpoint_every: int = 50
