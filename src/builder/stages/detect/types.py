@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...contracts import ReferenceCandidateRecord
-from ...utils.reference_graph import ReferenceGraphContext
+from ...utils.reference import ReferenceGraphContext
 
 
 @dataclass(frozen=True)

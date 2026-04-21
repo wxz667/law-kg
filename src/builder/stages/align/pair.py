@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ...contracts import AlignConceptRecord, AlignPairRecord, ConceptVectorRecord, EquivalenceRecord
+from ...utils.math import CosineMatrixIndex, normalize_numpy_matrix
+from ...utils.math import cosine_similarity
 
 try:
     import numpy as np
@@ -17,6 +19,7 @@ class PairRuntimeConfig:
     top_k_per_concept: int
     similarity_threshold: float
     matrix_block_size: int
+    device_preference: str
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,7 @@ def resolve_pair_runtime_config(runtime: Any) -> PairRuntimeConfig:
         top_k_per_concept=max(int(payload.get("top_k_per_concept", 20) or 20), 1),
         similarity_threshold=float(payload.get("similarity_threshold", 0.82) or 0.82),
         matrix_block_size=max(int(payload.get("matrix_block_size", 512) or 512), 1),
+        device_preference=str(payload.get("device_preference", "auto") or "auto").strip().lower() or "auto",
     )
 
 
@@ -51,10 +55,8 @@ def build_pairs(
     concept_by_id = {row.id: row for row in all_concepts}
     scoped = [row for row in scoped_concepts if row.id in vector_by_id]
     if progress_callback is not None:
-        progress_callback(0, max(len(scoped), 1))
+        progress_callback(0, len(scoped))
     if not scoped:
-        if progress_callback is not None:
-            progress_callback(1, 1)
         return []
 
     equivalence_targets = build_equivalence_targets(equivalence, concept_by_id, vector_by_id)
@@ -91,8 +93,16 @@ def build_pairs_numpy(
 ) -> list[AlignPairRecord]:
     raw_ids = [row.id for row in scoped]
     raw_roots = [row.root for row in scoped]
-    raw_matrix = normalize_matrix(np.asarray([vector_by_id[row.id] for row in scoped], dtype=np.float32))
+    raw_matrix = normalize_numpy_matrix([vector_by_id[row.id] for row in scoped])
+    raw_index = CosineMatrixIndex(
+        [vector_by_id[row.id] for row in scoped],
+        device_preference=config.device_preference,
+    )
     eq_matrix = build_equivalence_matrix(equivalence_targets, raw_matrix.shape[1])
+    eq_index = CosineMatrixIndex(
+        [row.vector for row in equivalence_targets],
+        device_preference=config.device_preference,
+    )
     eq_root_sets = [set(row.root_ids) for row in equivalence_targets]
     produced_pairs: list[AlignPairRecord] = []
     seen_pair_keys: set[tuple[str, str]] = set()
@@ -105,7 +115,7 @@ def build_pairs_numpy(
         candidate_heaps: list[list[tuple[float, str]]] = [[] for _ in range(left_end - left_start)]
 
         if eq_matrix.shape[0] > 0:
-            eq_scores = left_block @ eq_matrix.T
+            eq_scores = eq_index.score_normalized_block(left_block)
             for local_index in range(left_end - left_start):
                 left_root = raw_roots[left_start + local_index]
                 target_indices = np.flatnonzero(eq_scores[local_index] >= config.similarity_threshold)
@@ -119,42 +129,23 @@ def build_pairs_numpy(
                         config.top_k_per_concept,
                     )
 
-        self_scores = left_block @ left_block.T
+        raw_scores = raw_index.score_normalized_block(left_block)
         for local_index in range(left_end - left_start):
             left_root = raw_roots[left_start + local_index]
-            start_offset = local_index + 1
-            if start_offset >= left_end - left_start:
+            start_offset = left_start + local_index + 1
+            if start_offset >= len(scoped):
                 continue
-            raw_indices = np.flatnonzero(self_scores[local_index, start_offset:] >= config.similarity_threshold)
+            raw_indices = np.flatnonzero(raw_scores[local_index, start_offset:] >= config.similarity_threshold)
             for offset in raw_indices.tolist():
-                right_local_index = start_offset + offset
-                right_index = left_start + right_local_index
+                right_index = start_offset + offset
                 if left_root == raw_roots[right_index]:
                     continue
                 push_candidate(
                     candidate_heaps[local_index],
-                    float(self_scores[local_index, right_local_index]),
+                    float(raw_scores[local_index, right_index]),
                     raw_ids[right_index],
                     config.top_k_per_concept,
                 )
-
-        for right_start in range(left_end, len(scoped), block_size):
-            right_end = min(right_start + block_size, len(scoped))
-            right_block = raw_matrix[right_start:right_end]
-            cross_scores = left_block @ right_block.T
-            for local_index in range(left_end - left_start):
-                left_root = raw_roots[left_start + local_index]
-                raw_indices = np.flatnonzero(cross_scores[local_index] >= config.similarity_threshold)
-                for offset in raw_indices.tolist():
-                    right_index = right_start + offset
-                    if left_root == raw_roots[right_index]:
-                        continue
-                    push_candidate(
-                        candidate_heaps[local_index],
-                        float(cross_scores[local_index, offset]),
-                        raw_ids[right_index],
-                        config.top_k_per_concept,
-                    )
 
         for local_index, heap in enumerate(candidate_heaps):
             left_id = raw_ids[left_start + local_index]
@@ -167,7 +158,7 @@ def build_pairs_numpy(
             processed_concept_ids.append(left_id)
             current_count = left_start + local_index + 1
             if progress_callback is not None:
-                progress_callback(current_count, max(len(scoped), 1))
+                progress_callback(current_count, len(scoped))
             if checkpoint_callback is not None and checkpoint_every > 0:
                 if current_count >= len(scoped):
                     checkpoint_callback(
@@ -228,7 +219,7 @@ def build_pairs_python(
         )
         processed_concept_ids.append(left.id)
         if progress_callback is not None:
-            progress_callback(left_index + 1, max(len(scoped), 1))
+            progress_callback(left_index + 1, len(scoped))
         if checkpoint_callback is not None and checkpoint_every > 0:
             if left_index + 1 >= len(scoped):
                 checkpoint_callback(
@@ -306,22 +297,12 @@ def push_candidate(
     heapq.heapreplace(heap, item)
 
 
-def normalize_matrix(matrix):
-    if np is None:
-        return matrix
-    if matrix.size == 0:
-        return matrix
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    norms[norms == 0.0] = 1.0
-    return matrix / norms
-
-
 def build_equivalence_matrix(equivalence_targets: list[PairTarget], width: int):
     if np is None:
         return []
     if not equivalence_targets:
         return np.zeros((0, width), dtype=np.float32)
-    return normalize_matrix(np.asarray([row.vector for row in equivalence_targets], dtype=np.float32))
+    return normalize_numpy_matrix([row.vector for row in equivalence_targets])
 
 
 def build_equivalence_targets(
@@ -373,12 +354,3 @@ def build_pair_stats(
         "pair_count": len(pairs),
         "pending_count": sum(1 for row in pairs if row.relation == ""),
     }
-
-
-def cosine_similarity(left: list[float], right: list[float]) -> float:
-    if not left or not right:
-        return 0.0
-    numerator = sum(a * b for a, b in zip(left, right))
-    left_norm = sum(value * value for value in left) ** 0.5 or 1.0
-    right_norm = sum(value * value for value in right) ** 0.5 or 1.0
-    return numerator / (left_norm * right_norm)

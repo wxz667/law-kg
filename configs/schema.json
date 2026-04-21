@@ -1,11 +1,5 @@
 {
-  "node_types": [
-    "DocumentNode",
-    "TocNode",
-    "ProvisionNode",
-    "ConceptNode"
-  ],
-  "levels": [
+  "level_order": [
     "document",
     "part",
     "chapter",
@@ -18,255 +12,495 @@
     "appendix",
     "concept"
   ],
-  "level_to_node_type": {
-    "document": "DocumentNode",
-    "part": "TocNode",
-    "chapter": "TocNode",
-    "section": "TocNode",
-    "article": "ProvisionNode",
-    "paragraph": "ProvisionNode",
-    "item": "ProvisionNode",
-    "sub_item": "ProvisionNode",
-    "segment": "ProvisionNode",
-    "appendix": "ProvisionNode",
-    "concept": "ConceptNode"
-  },
-  "node_type_fields": {
-    "DocumentNode": [
-      "id",
-      "type",
-      "name",
-      "level",
-      "category",
-      "status",
-      "issuer",
-      "publish_date",
-      "effective_date",
-      "source_url"
-    ],
-    "TocNode": [
-      "id",
-      "type",
-      "name",
-      "level",
-      "order"
-    ],
-    "ProvisionNode": [
-      "id",
-      "type",
-      "name",
-      "level",
-      "text",
-      "article_suffix"
-    ],
-    "ConceptNode": [
-      "id",
-      "type",
-      "name",
-      "level",
-      "description"
-    ]
-  },
-  "edge_types": [
-    "CONTAINS",
-    "REFERENCES",
-    "INTERPRETS",
-    "MENTIONS",
-    "RELATED_TO",
-    "HAS_SUBORDINATE"
-  ],
-  "edge_type_categories": {
-    "CONTAINS": "structural",
-    "REFERENCES": "semantic",
-    "INTERPRETS": "semantic",
-    "MENTIONS": "semantic",
-    "RELATED_TO": "semantic",
-    "HAS_SUBORDINATE": "semantic"
-  },
-  "structural_edges": [
-    {
-      "parent_level": "document",
-      "child_level": "part",
-      "edge_type": "CONTAINS"
+  "nodes": {
+    "DocumentNode": {
+      "levels": [
+        "document"
+      ],
+      "fields": [
+        "id",
+        "type",
+        "name",
+        "level",
+        "category",
+        "status",
+        "issuer",
+        "publish_date",
+        "effective_date",
+        "source_url"
+      ]
     },
-    {
-      "parent_level": "part",
-      "child_level": "chapter",
-      "edge_type": "CONTAINS"
+    "TocNode": {
+      "levels": [
+        "part",
+        "chapter",
+        "section"
+      ],
+      "fields": [
+        "id",
+        "type",
+        "name",
+        "level"
+      ]
     },
-    {
-      "parent_level": "document",
-      "child_level": "chapter",
-      "edge_type": "CONTAINS"
+    "ProvisionNode": {
+      "levels": [
+        "article",
+        "paragraph",
+        "item",
+        "sub_item",
+        "segment",
+        "appendix"
+      ],
+      "fields": [
+        "id",
+        "type",
+        "name",
+        "level",
+        "text"
+      ]
     },
-    {
-      "parent_level": "chapter",
-      "child_level": "section",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "document",
-      "child_level": "section",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "part",
-      "child_level": "section",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "document",
-      "child_level": "article",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "part",
-      "child_level": "article",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "chapter",
-      "child_level": "article",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "section",
-      "child_level": "article",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "article",
-      "child_level": "paragraph",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "article",
-      "child_level": "item",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "paragraph",
-      "child_level": "item",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "item",
-      "child_level": "sub_item",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "document",
-      "child_level": "segment",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "document",
-      "child_level": "item",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "part",
-      "child_level": "segment",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "part",
-      "child_level": "item",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "chapter",
-      "child_level": "segment",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "chapter",
-      "child_level": "item",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "section",
-      "child_level": "segment",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "section",
-      "child_level": "item",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "article",
-      "child_level": "segment",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "segment",
-      "child_level": "item",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "document",
-      "child_level": "appendix",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "appendix",
-      "child_level": "segment",
-      "edge_type": "CONTAINS"
-    },
-    {
-      "parent_level": "appendix",
-      "child_level": "item",
-      "edge_type": "CONTAINS"
+    "ConceptNode": {
+      "levels": [
+        "concept"
+      ],
+      "fields": [
+        "id",
+        "type",
+        "name",
+        "level",
+        "description"
+      ]
     }
-  ],
-  "allowed_outgoing_edges": {
-    "DocumentNode": [
-      "CONTAINS",
-      "REFERENCES",
-      "INTERPRETS",
-      "MENTIONS"
-    ],
-    "TocNode": [
-      "CONTAINS",
-      "MENTIONS"
-    ],
-    "ProvisionNode": [
-      "CONTAINS",
-      "REFERENCES",
-      "INTERPRETS",
-      "MENTIONS"
-    ],
-    "ConceptNode": [
-      "RELATED_TO",
-      "HAS_SUBORDINATE"
-    ]
   },
-  "semantic_edge_rules": [
-    {
-      "edge_type": "MENTIONS",
-      "source_type": "DocumentNode",
-      "target_type": "ConceptNode"
+  "edges": {
+    "CONTAINS": {
+      "rules": [
+        {
+          "source": {
+            "type": "DocumentNode",
+            "level": "document"
+          },
+          "target": {
+            "type": "TocNode",
+            "level": "part"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "part"
+          },
+          "target": {
+            "type": "TocNode",
+            "level": "chapter"
+          }
+        },
+        {
+          "source": {
+            "type": "DocumentNode",
+            "level": "document"
+          },
+          "target": {
+            "type": "TocNode",
+            "level": "chapter"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "chapter"
+          },
+          "target": {
+            "type": "TocNode",
+            "level": "section"
+          }
+        },
+        {
+          "source": {
+            "type": "DocumentNode",
+            "level": "document"
+          },
+          "target": {
+            "type": "TocNode",
+            "level": "section"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "part"
+          },
+          "target": {
+            "type": "TocNode",
+            "level": "section"
+          }
+        },
+        {
+          "source": {
+            "type": "DocumentNode",
+            "level": "document"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "article"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "part"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "article"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "chapter"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "article"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "section"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "article"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode",
+            "level": "article"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "paragraph"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode",
+            "level": "article"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "item"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode",
+            "level": "paragraph"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "item"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode",
+            "level": "item"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "sub_item"
+          }
+        },
+        {
+          "source": {
+            "type": "DocumentNode",
+            "level": "document"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "segment"
+          }
+        },
+        {
+          "source": {
+            "type": "DocumentNode",
+            "level": "document"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "item"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "part"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "segment"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "part"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "item"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "chapter"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "segment"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "chapter"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "item"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "section"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "segment"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode",
+            "level": "section"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "item"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode",
+            "level": "article"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "segment"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode",
+            "level": "segment"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "item"
+          }
+        },
+        {
+          "source": {
+            "type": "DocumentNode",
+            "level": "document"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "appendix"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode",
+            "level": "appendix"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "segment"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode",
+            "level": "appendix"
+          },
+          "target": {
+            "type": "ProvisionNode",
+            "level": "item"
+          }
+        }
+      ]
     },
-    {
-      "edge_type": "MENTIONS",
-      "source_type": "TocNode",
-      "target_type": "ConceptNode"
+    "REFERENCES": {
+      "rules": [
+        {
+          "source": {
+            "type": "DocumentNode"
+          },
+          "target": {
+            "type": "DocumentNode"
+          }
+        },
+        {
+          "source": {
+            "type": "DocumentNode"
+          },
+          "target": {
+            "type": "TocNode"
+          }
+        },
+        {
+          "source": {
+            "type": "DocumentNode"
+          },
+          "target": {
+            "type": "ProvisionNode"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode"
+          },
+          "target": {
+            "type": "DocumentNode"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode"
+          },
+          "target": {
+            "type": "TocNode"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode"
+          },
+          "target": {
+            "type": "ProvisionNode"
+          }
+        }
+      ]
     },
-    {
-      "edge_type": "MENTIONS",
-      "source_type": "ProvisionNode",
-      "target_type": "ConceptNode"
+    "INTERPRETS": {
+      "rules": [
+        {
+          "source": {
+            "type": "DocumentNode"
+          },
+          "target": {
+            "type": "DocumentNode"
+          }
+        },
+        {
+          "source": {
+            "type": "DocumentNode"
+          },
+          "target": {
+            "type": "TocNode"
+          }
+        },
+        {
+          "source": {
+            "type": "DocumentNode"
+          },
+          "target": {
+            "type": "ProvisionNode"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode"
+          },
+          "target": {
+            "type": "DocumentNode"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode"
+          },
+          "target": {
+            "type": "TocNode"
+          }
+        },
+        {
+          "source": {
+            "type": "ProvisionNode"
+          },
+          "target": {
+            "type": "ProvisionNode"
+          }
+        }
+      ]
     },
-    {
-      "edge_type": "RELATED_TO",
-      "source_type": "ConceptNode",
-      "target_type": "ConceptNode"
+    "MENTIONS": {
+      "rules": [
+        {
+          "source": {
+            "type": "DocumentNode"
+          },
+          "target": {
+            "type": "ConceptNode",
+            "level": "concept"
+          }
+        },
+        {
+          "source": {
+            "type": "TocNode"
+          },
+          "target": {
+            "type": "ConceptNode",
+            "level": "concept"
+          }
+        }
+      ]
     },
-    {
-      "edge_type": "HAS_SUBORDINATE",
-      "source_type": "ConceptNode",
-      "target_type": "ConceptNode"
+    "RELATED_TO": {
+      "rules": [
+        {
+          "source": {
+            "type": "ConceptNode",
+            "level": "concept"
+          },
+          "target": {
+            "type": "ConceptNode",
+            "level": "concept"
+          }
+        }
+      ]
+    },
+    "HAS_SUBORDINATE": {
+      "rules": [
+        {
+          "source": {
+            "type": "ConceptNode",
+            "level": "concept"
+          },
+          "target": {
+            "type": "ConceptNode",
+            "level": "concept"
+          }
+        }
+      ]
     }
-  ]
+  }
 }

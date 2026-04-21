@@ -69,6 +69,7 @@ def run(
         members = [concept_by_id[member_id] for member_id in member_ids if member_id in concept_by_id]
         name = choose_equivalence_name(members)
         description = choose_equivalence_description(members, name)
+        representative_member_id = choose_equivalence_representative_member(members, name)
         root_ids = sorted({member.root for member in members if member.root})
         equivalence.append(
             EquivalenceRecord(
@@ -77,6 +78,7 @@ def run(
                 description=description,
                 member_ids=sorted(member_ids),
                 root_ids=root_ids,
+                representative_member_id=representative_member_id,
             )
         )
         for member_id in member_ids:
@@ -344,6 +346,19 @@ def choose_equivalence_description(members: list[AlignConceptRecord], name: str)
         return sorted(descriptions, key=lambda item: (-len(item), item))[0]
     fallback = [member.description for member in members if str(member.description).strip()]
     return sorted(fallback, key=lambda item: (-len(item), item))[0] if fallback else ""
+
+
+def choose_equivalence_representative_member(
+    members: list[AlignConceptRecord],
+    canonical_name: str,
+) -> str:
+    if not members:
+        return ""
+    exact_name_matches = sorted(member.id for member in members if member.name == canonical_name and member.id)
+    if exact_name_matches:
+        return exact_name_matches[0]
+    available = sorted(member.id for member in members if member.id)
+    return available[0] if available else ""
 
 
 class UnionFind:

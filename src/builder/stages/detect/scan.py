@@ -9,7 +9,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from ...contracts import ReferenceCandidateRecord
-from ...utils.legal_reference import (
+from ...utils.reference import (
     candidate_source_prefix,
     document_title,
     is_judicial_interpretation_document,

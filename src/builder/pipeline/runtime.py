@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,22 @@ from utils.llm.base import ProviderRequestConfig, build_provider_request_config
 from utils.llm.factory import build_provider_client
 
 from ..utils.ids import project_root
+
+
+SUBSTAGE_DRIVEN_STAGES = frozenset({"classify", "extract", "align", "infer"})
+
+def resolve_builder_substage_config(runtime: Any, stage_name: str, substage_name: str) -> dict[str, Any]:
+    if hasattr(runtime, "builder_substage_config"):
+        resolver = getattr(runtime, "builder_substage_config")
+        if callable(resolver):
+            payload = resolver(stage_name, substage_name)
+            return dict(payload) if isinstance(payload, dict) else {}
+    stage_getter = getattr(runtime, f"{stage_name}_config", None)
+    stage_config = stage_getter() if callable(stage_getter) else {}
+    if not isinstance(stage_config, dict):
+        return {}
+    payload = stage_config.get(substage_name, {})
+    return dict(payload) if isinstance(payload, dict) else {}
 
 
 class PipelineRuntime:
@@ -30,16 +47,22 @@ class PipelineRuntime:
         config = builder.get(stage_name, {})
         return dict(config) if isinstance(config, dict) else {}
 
+    def builder_substage_config(self, stage_name: str, substage_name: str) -> dict[str, Any]:
+        stage_config = self.builder_stage_config(stage_name)
+        payload = stage_config.get(substage_name, {})
+        return dict(payload) if isinstance(payload, dict) else {}
+
     def stage_checkpoint_every(self, stage_name: str, default: int = 0) -> int:
+        if stage_name in SUBSTAGE_DRIVEN_STAGES:
+            return 0
         config = self.builder_stage_config(stage_name)
         return max(int(config.get("checkpoint_every", default) or default), 0)
 
     def substage_checkpoint_every(self, stage_name: str, substage_name: str, default: int = 0) -> int:
-        config = self.builder_stage_config(stage_name)
-        substage = config.get(substage_name, {})
-        if isinstance(substage, dict) and "checkpoint_every" in substage:
+        substage = self.builder_substage_config(stage_name, substage_name)
+        if "checkpoint_every" in substage:
             return max(int(substage.get("checkpoint_every", default) or default), 0)
-        return self.stage_checkpoint_every(stage_name, default)
+        return max(int(default or 0), 0)
 
     def detect_config(self) -> dict[str, Any]:
         return self.builder_stage_config("detect")
@@ -55,6 +78,9 @@ class PipelineRuntime:
 
     def align_config(self) -> dict[str, Any]:
         return self.builder_stage_config("align")
+
+    def infer_config(self) -> dict[str, Any]:
+        return self.builder_stage_config("infer")
 
     def build_request_config(self, payload: dict[str, Any]) -> ProviderRequestConfig:
         return build_provider_request_config(
@@ -75,14 +101,14 @@ class PipelineRuntime:
         return client.embed_texts(texts, model=request_config.model)
 
     def predict_interprets(self, inputs: list[Any]) -> list[Any]:
-        from interprets_filter.api import predict_interprets
-
-        return predict_interprets(inputs, model_dir=self.models_root / "interprets_filter", config_path=self.config_path)
-
-    def predict_implicit_relations(self, graph_features: list[dict[str, object]]) -> list[Any]:
-        from rgcn.api import predict_implicit_relations
-
-        return predict_implicit_relations(graph_features, model_dir=self.models_root / "rgcn")
+        config = self.builder_substage_config("classify", "model")
+        predictor_path = str(config.get("interprets_predictor", "")).strip()
+        module_name, separator, function_name = predictor_path.partition(":")
+        if not module_name or not separator or not function_name:
+            raise ValueError("classify.model.interprets_predictor must use 'module:function' format.")
+        predictor = getattr(import_module(module_name), function_name)
+        model_dir = self.models_root / str(config.get("interprets_model_dir", "interprets_filter"))
+        return predictor(inputs, model_dir=model_dir, config_path=self.config_path)
 
     def _provider_client(self, request_config: ProviderRequestConfig) -> Any:
         cache_key = json.dumps(

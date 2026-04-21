@@ -15,6 +15,7 @@ from ..contracts import (
     EquivalenceRecord,
     ExtractConceptRecord,
     ExtractInputRecord,
+    InferPairRecord,
     JobLogRecord,
     LlmJudgeDetailRecord,
     NodeRecord,
@@ -228,6 +229,22 @@ def write_align_relations(path: Path, rows: list[AlignRelationRecord]) -> None:
 
 
 def read_align_relations(path: Path) -> list[AlignRelationRecord]:
+    return [AlignRelationRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def write_infer_pairs(path: Path, rows: list[InferPairRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_infer_pairs(path: Path) -> list[InferPairRecord]:
+    return [InferPairRecord.from_dict(row) for row in read_jsonl(path)]
+
+
+def write_infer_relations(path: Path, rows: list[AlignRelationRecord]) -> None:
+    write_jsonl(path, [row.to_dict() for row in rows])
+
+
+def read_infer_relations(path: Path) -> list[AlignRelationRecord]:
     return [AlignRelationRecord.from_dict(row) for row in read_jsonl(path)]
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...contracts import LogicalDocumentRecord
-from ...utils.document_layout import compact_text_key
+from ...utils.layout import compact_text_key
 
 
 def choose_primary_document(

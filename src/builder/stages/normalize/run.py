@@ -5,9 +5,41 @@ from typing import Callable
 
 from ...contracts import NormalizeIndexEntry, NormalizeStageIndex
 from ...io import BuildLayout, read_normalize_index, write_normalize_index
-from ...pipeline.incremental import merge_normalize_index, read_existing_normalize_index
 from .metadata import build_document_index, load_metadata_items
 from .normalizer import process_metadata_item
+
+
+def merge_normalize_index(
+    existing_index: NormalizeStageIndex | None,
+    updated_entries: list[NormalizeIndexEntry],
+) -> NormalizeStageIndex:
+    merged_by_source_id = {
+        entry.source_id: entry
+        for entry in (existing_index.entries if existing_index is not None else [])
+        if entry.source_id
+    }
+    for entry in updated_entries:
+        merged_by_source_id[entry.source_id] = entry
+    merged_entries = [merged_by_source_id[key] for key in sorted(merged_by_source_id)]
+    success_count = sum(1 for entry in merged_entries if entry.status == "completed")
+    failed_count = len(merged_entries) - success_count
+    reused_count = sum(1 for entry in merged_entries if entry.details.get("reused") is True)
+    return NormalizeStageIndex(
+        stage="normalize",
+        entries=merged_entries,
+        stats={
+            "source_count": len(merged_entries),
+            "succeeded_sources": success_count,
+            "failed_sources": failed_count,
+            "reused_sources": reused_count,
+        },
+    )
+
+
+def read_existing_normalize_index(path) -> NormalizeStageIndex | None:
+    if not path.exists():
+        return None
+    return read_normalize_index(path)
 
 
 def run(

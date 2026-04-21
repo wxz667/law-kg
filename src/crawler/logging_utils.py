@@ -4,8 +4,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from builder.io.json_store import write_json
-
+from .io import write_json
 from .models import CrawlStats, FailureRecord, utc_now_iso
 
 

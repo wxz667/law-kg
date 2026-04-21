@@ -3,13 +3,11 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Iterator
 
-from interprets_filter.api import InterpretFilterInput
-
-from ...pipeline.runtime import PipelineRuntime
+from ...pipeline.runtime import PipelineRuntime, resolve_builder_substage_config
 
 
 def resolve_interprets_policy(runtime: PipelineRuntime) -> dict[str, float | bool | int]:
-    raw = dict(runtime.classify_config().get("interprets_filter_policy", {}))
+    raw = resolve_builder_substage_config(runtime, "classify", "model")
     return {
         "high_confidence_true_threshold": float(raw.get("high_confidence_true_threshold", 0.8)),
         "low_confidence_false_threshold": float(raw.get("low_confidence_false_threshold", 0.35)),
@@ -38,7 +36,7 @@ def batched_predict_interprets(
         if cancel_event is not None and cancel_event.is_set():
             raise KeyboardInterrupt
         batch_texts = marked_texts[start : start + step]
-        predictions.extend(runtime.predict_interprets([InterpretFilterInput(text=text) for text in batch_texts]))
+        predictions.extend(runtime.predict_interprets([{"text": text} for text in batch_texts]))
         if progress_callback is not None:
             progress_callback(min(start + len(batch_texts), total), total)
     return predictions
@@ -62,7 +60,7 @@ def iter_predict_interprets_batches(
         if cancel_event is not None and cancel_event.is_set():
             raise KeyboardInterrupt
         batch_texts = marked_texts[start : start + step]
-        predictions = runtime.predict_interprets([InterpretFilterInput(text=text) for text in batch_texts])
+        predictions = runtime.predict_interprets([{"text": text} for text in batch_texts])
         completed = min(start + len(batch_texts), total)
         if progress_callback is not None:
             progress_callback(completed, total)

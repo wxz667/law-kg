@@ -10,7 +10,7 @@ from ...contracts import (
     ReferenceCandidateRecord,
     ClassifyRecord,
 )
-from ...utils.reference_graph import ReferenceGraphContext
+from ...utils.reference import ReferenceGraphContext
 
 
 @dataclass

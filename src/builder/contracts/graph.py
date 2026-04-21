@@ -16,52 +16,97 @@ def load_graph_schema() -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _node_schema() -> dict[str, dict[str, Any]]:
+    payload = load_graph_schema().get("nodes", {})
+    return {
+        str(node_type): dict(config)
+        for node_type, config in payload.items()
+        if isinstance(config, dict)
+    }
+
+
+def _edge_schema() -> dict[str, dict[str, Any]]:
+    payload = load_graph_schema().get("edges", {})
+    return {
+        str(edge_type): dict(config)
+        for edge_type, config in payload.items()
+        if isinstance(config, dict)
+    }
+
+
 def _node_allowed_fields() -> dict[str, tuple[str, ...]]:
     return {
-        node_type: tuple(field_names)
-        for node_type, field_names in load_graph_schema().get("node_type_fields", {}).items()
+        node_type: tuple(str(field_name) for field_name in config.get("fields", []))
+        for node_type, config in _node_schema().items()
     }
 
 
 def _edge_types() -> set[str]:
-    return set(load_graph_schema().get("edge_types", []))
+    return set(_edge_schema())
 
 
 def _levels() -> set[str]:
-    return set(load_graph_schema().get("levels", []))
-
-
-def _level_to_node_type() -> dict[str, str]:
-    return dict(load_graph_schema().get("level_to_node_type", {}))
-
-
-def _allowed_outgoing_edges() -> dict[str, set[str]]:
     return {
-        node_type: set(edge_types)
-        for node_type, edge_types in load_graph_schema().get("allowed_outgoing_edges", {}).items()
+        str(level)
+        for config in _node_schema().values()
+        for level in config.get("levels", [])
     }
 
 
-def _structural_edge_rules() -> set[tuple[str, str, str]]:
+def graph_level_order() -> list[str]:
+    schema = load_graph_schema()
+    raw = schema.get("level_order", [])
+    if isinstance(raw, list) and raw:
+        return [str(level) for level in raw]
+    return sorted(_levels())
+
+
+def level_to_node_type() -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for node_type, config in _node_schema().items():
+        for level in config.get("levels", []):
+            mapping[str(level)] = node_type
+    return mapping
+
+
+def contains_edge_by_levels() -> dict[tuple[str, str], str]:
     return {
-        (rule["parent_level"], rule["child_level"], rule["edge_type"])
-        for rule in load_graph_schema().get("structural_edges", [])
+        (source_level, target_level): edge_type
+        for source_level, target_level, edge_type, _source_type, _target_type in _edge_rules()
+        if source_level and target_level and edge_type == "CONTAINS"
     }
 
 
-def _structural_edge_types() -> set[str]:
-    return {
-        edge_type
-        for edge_type, category in load_graph_schema().get("edge_type_categories", {}).items()
-        if category == "structural"
-    }
+def _edge_rules() -> set[tuple[str, str, str, str, str]]:
+    rules: set[tuple[str, str, str, str, str]] = set()
+    for edge_type, config in _edge_schema().items():
+        for rule in config.get("rules", []):
+            if not isinstance(rule, dict):
+                continue
+            source = rule.get("source", {})
+            target = rule.get("target", {})
+            if not isinstance(source, dict) or not isinstance(target, dict):
+                continue
+            rules.add(
+                (
+                    str(source.get("level", "") or ""),
+                    str(target.get("level", "") or ""),
+                    edge_type,
+                    str(source.get("type", "") or ""),
+                    str(target.get("type", "") or ""),
+                )
+            )
+    return rules
 
 
-def _semantic_edge_rules() -> set[tuple[str, str, str]]:
-    return {
-        (rule["source_type"], rule["target_type"], rule["edge_type"])
-        for rule in load_graph_schema().get("semantic_edge_rules", [])
-    }
+def _edge_rule_matches(node: NodeRecord, constraint: dict[str, Any]) -> bool:
+    source_type = str(constraint.get("type", "") or "")
+    source_level = str(constraint.get("level", "") or "")
+    if source_type and node.type != source_type:
+        return False
+    if source_level and node.level != source_level:
+        return False
+    return True
 
 
 @dataclass
@@ -78,14 +123,6 @@ class NodeRecord:
     publish_date: str = ""
     effective_date: str = ""
     source_url: str = ""
-    order: int = 0
-    article_suffix: int = 0
-    candidate: bool = False
-    alignment_status: str = ""
-    normalized_text: str = ""
-    aliases: list[str] = field(default_factory=list)
-    normalized_values: list[str] = field(default_factory=list)
-    source_members: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -104,24 +141,10 @@ class NodeRecord:
             "publish_date",
             "effective_date",
             "source_url",
-            "alignment_status",
-            "normalized_text",
         ):
             value = getattr(self, field_name)
             if value not in {"", None}:
                 payload[field_name] = value
-        for field_name in ("order", "article_suffix"):
-            value = int(getattr(self, field_name) or 0)
-            if value > 0:
-                payload[field_name] = value
-        if self.candidate:
-            payload["candidate"] = True
-        if self.aliases:
-            payload["aliases"] = list(self.aliases)
-        if self.normalized_values:
-            payload["normalized_values"] = list(self.normalized_values)
-        if self.source_members:
-            payload["source_members"] = list(self.source_members)
         allowed_fields = set(_allowed_fields_for_type(self.type))
         return {key: value for key, value in payload.items() if key in allowed_fields}
 
@@ -153,13 +176,13 @@ class NodeRecord:
     def validate(self) -> None:
         if self.level not in _levels():
             raise ValueError(f"Unsupported node level: {self.level}")
-        if self.type not in load_graph_schema().get("node_types", []):
+        if self.type not in _node_schema():
             raise ValueError(f"Unsupported node type: {self.type}")
-        expected_node_type = _level_to_node_type().get(self.level)
-        if expected_node_type != self.type:
+        allowed_levels = {str(level) for level in _node_schema().get(self.type, {}).get("levels", [])}
+        if self.level not in allowed_levels:
             raise ValueError(
                 f"Node {self.id} has level {self.level} but type {self.type}; "
-                f"schema expects {expected_node_type}."
+                f"schema allows levels {sorted(allowed_levels)}."
             )
         allowed_fields = _allowed_fields_for_type(self.type)
         for field_name in (
@@ -171,14 +194,6 @@ class NodeRecord:
             "publish_date",
             "effective_date",
             "source_url",
-            "order",
-            "article_suffix",
-            "candidate",
-            "alignment_status",
-            "normalized_text",
-            "aliases",
-            "normalized_values",
-            "source_members",
         ):
             field_value = getattr(self, field_name)
             if not _is_empty_value(field_value) and field_name not in allowed_fields:
@@ -258,38 +273,26 @@ class GraphBundle:
         if missing:
             raise ValueError(f"Graph bundle contains edges with missing node references: {missing}")
 
-        structural_rules = _structural_edge_rules()
-        structural_edge_types = _structural_edge_types()
-        semantic_edge_rules = _semantic_edge_rules()
-        allowed_outgoing_edges = _allowed_outgoing_edges()
+        edge_schema = _edge_schema()
         for edge in self.edges:
             source_node = node_index[edge.source]
             target_node = node_index[edge.target]
-            allowed_for_source = allowed_outgoing_edges.get(source_node.type, set())
-            if edge.type not in allowed_for_source:
+            rules = edge_schema.get(edge.type, {}).get("rules", [])
+            if not isinstance(rules, list) or not rules:
                 raise ValueError(
-                    f"Edge {edge.id} of type {edge.type} is not allowed from node type {source_node.type}."
+                    f"Edge {edge.id} of type {edge.type} has no schema rules."
                 )
-            if edge.type in structural_edge_types and (
-                source_node.level,
-                target_node.level,
-                edge.type,
-            ) not in structural_rules:
+            if not any(
+                isinstance(rule, dict)
+                and _edge_rule_matches(source_node, rule.get("source", {}))
+                and _edge_rule_matches(target_node, rule.get("target", {}))
+                for rule in rules
+            ):
                 raise ValueError(
-                    f"Structural edge {edge.id} violates schema rule: "
-                    f"{source_node.level} -> {target_node.level} via {edge.type}."
+                    f"Edge {edge.id} violates schema rule: "
+                    f"{source_node.type}({source_node.level}) -> "
+                    f"{target_node.type}({target_node.level}) via {edge.type}."
                 )
-            if edge.type not in structural_edge_types and semantic_edge_rules and (
-                source_node.type,
-                target_node.type,
-                edge.type,
-            ) not in semantic_edge_rules:
-                matching_rules = [rule for rule in semantic_edge_rules if rule[2] == edge.type]
-                if matching_rules:
-                    raise ValueError(
-                        f"Semantic edge {edge.id} violates schema rule: "
-                        f"{source_node.type} -> {target_node.type} via {edge.type}."
-                    )
 
 
 def deduplicate_graph(bundle: GraphBundle) -> GraphBundle:

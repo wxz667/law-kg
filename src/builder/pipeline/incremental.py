@@ -1,374 +1,227 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from dataclasses import dataclass
 from dataclasses import replace
+from typing import Literal
+
 from ..contracts import (
-    AggregateConceptRecord,
-    ClassifyPendingRecord,
-    ExtractConceptRecord,
-    ExtractInputRecord,
-    GraphBundle,
-    LlmJudgeDetailRecord,
-    NodeRecord,
-    NormalizeIndexEntry,
-    NormalizeStageIndex,
-    ReferenceCandidateRecord,
-    ClassifyRecord,
-    deduplicate_graph,
+    StageStateManifest,
+    SubstageStateManifest,
 )
-from ..io import read_normalize_index
-from ..utils.locator import owner_source_id
+from ..io import read_stage_manifest, write_stage_manifest
 
 
-def owner_document_by_node(graph_bundle: GraphBundle) -> dict[str, str]:
-    node_index = {node.id: node for node in graph_bundle.nodes}
-    parent_by_child = {
-        edge.target: edge.source
-        for edge in graph_bundle.edges
-        if edge.type == "CONTAINS"
+ReuseKind = Literal["full", "partial", "none"]
+
+
+@dataclass(frozen=True)
+class ReuseDecision:
+    kind: ReuseKind
+    reusable_unit_ids: tuple[str, ...] = ()
+    upstream_signature: str = ""
+    reason: str = ""
+
+    @property
+    def is_full(self) -> bool:
+        return self.kind == "full"
+
+    @property
+    def is_partial(self) -> bool:
+        return self.kind == "partial"
+
+    @property
+    def is_none(self) -> bool:
+        return self.kind == "none"
+
+
+IGNORED_SIGNATURE_FIELDS = {"updated_at", "inputs", "artifacts"}
+
+
+def _normalize_unit_ids(unit_ids: list[str] | tuple[str, ...] | set[str]) -> list[str]:
+    return sorted(dict.fromkeys(str(value).strip() for value in unit_ids if str(value).strip()))
+
+
+def _stable_manifest_payload(manifest: StageStateManifest | SubstageStateManifest) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "unit": manifest.unit,
+        "stats": _stable_json_value(manifest.stats),
+        "metadata": _stable_metadata(manifest.metadata),
+        "processed_units": _normalize_unit_ids(tuple(manifest.processed_units)),
     }
-    owners: dict[str, str] = {}
-    for node in graph_bundle.nodes:
-        current = node.id
-        if node.level == "document":
-            owners[node.id] = node.id
-            continue
-        while current in parent_by_child:
-            current = parent_by_child[current]
-            parent = node_index.get(current)
-            if parent is not None and parent.level == "document":
-                owners[node.id] = parent.id
-                break
-    return owners
+    if isinstance(manifest, StageStateManifest):
+        payload["stage"] = manifest.stage
+    if manifest.substages:
+        payload["substages"] = {
+            name: _stable_manifest_payload(state)
+            for name, state in sorted(manifest.substages.items())
+        }
+    return payload
 
 
-def owner_source_id_for_node(owners: dict[str, str], node_id: str) -> str:
-    return owner_source_id(owners.get(node_id, node_id))
-
-
-def graph_node_ids(graph_bundle: GraphBundle) -> set[str]:
-    return {node.id for node in graph_bundle.nodes}
-
-
-def filter_reference_candidates_by_graph(
-    rows: list[ReferenceCandidateRecord],
-    *,
-    graph_bundle: GraphBundle,
-) -> list[ReferenceCandidateRecord]:
-    node_ids = graph_node_ids(graph_bundle)
-    return [
-        row
-        for row in rows
-        if row.source_node_id in node_ids
-        and all(target_node_id in node_ids for target_node_id in row.target_node_ids)
-    ]
-
-
-def filter_classify_outputs_by_graph(
-    rows: list[ClassifyRecord],
-    *,
-    graph_bundle: GraphBundle,
-) -> list[ClassifyRecord]:
-    node_ids = graph_node_ids(graph_bundle)
-    filtered: list[ClassifyRecord] = []
-    for row in rows:
-        if row.source_node_id not in node_ids:
-            continue
-        target_node_ids = [target_node_id for target_node_id in row.target_node_ids if target_node_id in node_ids]
-        if not target_node_ids:
-            continue
-        if len(target_node_ids) == len(row.target_node_ids):
-            filtered.append(row)
-        else:
-            filtered.append(replace(row, target_node_ids=target_node_ids))
-    return filtered
-
-
-def filter_extract_inputs_by_graph(
-    rows: list[ExtractInputRecord],
-    *,
-    graph_bundle: GraphBundle,
-) -> list[ExtractInputRecord]:
-    node_ids = graph_node_ids(graph_bundle)
-    deduped: dict[str, ExtractInputRecord] = {}
-    for row in rows:
-        if row.id in node_ids:
-            deduped[row.id] = row
-    return [deduped[key] for key in sorted(deduped)]
-
-
-def filter_extract_concepts_by_graph(
-    rows: list[ExtractConceptRecord],
-    *,
-    graph_bundle: GraphBundle,
-) -> list[ExtractConceptRecord]:
-    node_ids = graph_node_ids(graph_bundle)
-    deduped: dict[str, ExtractConceptRecord] = {}
-    for row in rows:
-        if row.id in node_ids:
-            deduped[row.id] = row
-    return list(deduped.values())
-
-
-def filter_aggregate_concepts_by_graph(
-    rows: list[AggregateConceptRecord],
-    *,
-    graph_bundle: GraphBundle,
-) -> list[AggregateConceptRecord]:
-    node_ids = graph_node_ids(graph_bundle)
-    deduped: dict[str, AggregateConceptRecord] = {}
-    for row in rows:
-        if row.root in node_ids:
-            deduped[row.id] = row
-    return list(deduped.values())
-
-
-def merge_normalize_index(
-    existing_index: NormalizeStageIndex | None,
-    updated_entries: list[NormalizeIndexEntry],
-) -> NormalizeStageIndex:
-    merged_by_source_id = {
-        entry.source_id: entry
-        for entry in (existing_index.entries if existing_index is not None else [])
-        if entry.source_id
+def _stable_metadata(metadata: dict[str, object]) -> dict[str, object]:
+    return {
+        str(key): _stable_json_value(value)
+        for key, value in sorted(metadata.items())
+        if str(key) not in IGNORED_SIGNATURE_FIELDS
     }
-    for entry in updated_entries:
-        merged_by_source_id[entry.source_id] = entry
-    merged_entries = [merged_by_source_id[key] for key in sorted(merged_by_source_id)]
-    success_count = sum(1 for entry in merged_entries if entry.status == "completed")
-    failed_count = len(merged_entries) - success_count
-    reused_count = sum(1 for entry in merged_entries if entry.details.get("reused") is True)
-    return NormalizeStageIndex(
-        stage="normalize",
-        entries=merged_entries,
-        stats={
-            "source_count": len(merged_entries),
-            "succeeded_sources": success_count,
-            "failed_sources": failed_count,
-            "reused_sources": reused_count,
-        },
-    )
 
 
-def read_existing_normalize_index(path) -> NormalizeStageIndex | None:
-    if not path.exists():
-        return None
-    return read_normalize_index(path)
+def _stable_json_value(value):
+    if isinstance(value, dict):
+        return {
+            str(key): _stable_json_value(item)
+            for key, item in sorted(value.items())
+            if str(key) not in IGNORED_SIGNATURE_FIELDS
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_stable_json_value(item) for item in value]
+    return value
 
 
-def replace_document_subgraphs(
-    existing_bundle: GraphBundle,
-    replacement_bundle: GraphBundle,
-    *,
-    active_source_ids: set[str],
+def stable_payload_signature(payload: object) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def build_upstream_signature(manifest: StageStateManifest) -> str:
+    return stable_payload_signature(_stable_manifest_payload(manifest))
+
+
+def build_upstream_signature_for_stage(layout, stage_name: str) -> str:
+    manifest_path = layout.stage_manifest_path(stage_name)
+    if not manifest_path.exists():
+        return ""
+    return build_upstream_signature(read_stage_manifest(manifest_path))
+
+
+def get_reusable_units(
+    layout,
     stage_name: str,
-) -> GraphBundle:
-    owners = owner_document_by_node(existing_bundle)
-    replacement_node_ids = {node.id for node in replacement_bundle.nodes}
-    keep_nodes = [
-        node
-        for node in existing_bundle.nodes
-        if owner_source_id_for_node(owners, node.id) not in active_source_ids
-    ]
-    keep_edges = [
-        edge
-        for edge in existing_bundle.edges
-        if edge.source not in replacement_node_ids
-        and edge.target not in replacement_node_ids
-        and owner_source_id_for_node(owners, edge.source) not in active_source_ids
-        and owner_source_id_for_node(owners, edge.target) not in active_source_ids
-    ]
-    del stage_name
-    merged = GraphBundle(
-        nodes=keep_nodes + list(replacement_bundle.nodes),
-        edges=keep_edges + list(replacement_bundle.edges),
-    )
-    return deduplicate_graph(merged)
-
-
-def replace_detect_outputs(
-    rows: list[ReferenceCandidateRecord],
-    replacements: list[ReferenceCandidateRecord],
+    unit_ids: list[str],
     *,
-    graph_bundle: GraphBundle,
-    active_source_ids: set[str],
-) -> list[ReferenceCandidateRecord]:
-    owners = owner_document_by_node(graph_bundle)
-    kept = [
-        row
-        for row in rows
-        if owner_source_id_for_node(owners, row.source_node_id) not in active_source_ids
-    ]
-    return filter_reference_candidates_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
+    substage_name: str | None = None,
+    force_rebuild: bool = False,
+) -> list[str]:
+    if force_rebuild:
+        return []
+    normalized_units = _normalize_unit_ids(tuple(unit_ids))
+    if not normalized_units:
+        return []
+    manifest_path = layout.stage_manifest_path(stage_name)
+    if not manifest_path.exists():
+        return []
+    manifest = read_stage_manifest(manifest_path)
+    state: StageStateManifest | SubstageStateManifest | None = manifest
+    if substage_name is not None:
+        state = manifest.substages.get(substage_name)
+    if state is None:
+        return []
+    processed = set(_normalize_unit_ids(tuple(state.processed_units)))
+    return [unit_id for unit_id in normalized_units if unit_id in processed]
 
 
-def replace_classify_outputs_by_unit_ids(
-    rows: list[ClassifyRecord],
-    replacements: list[ClassifyRecord],
+def get_stage_reuse_decision(
+    layout,
+    stage_name: str,
+    unit_ids: list[str],
     *,
-    graph_bundle: GraphBundle,
-    active_unit_ids: set[str],
-) -> list[ClassifyRecord]:
-    kept = [row for row in rows if row.id not in active_unit_ids]
-    return filter_classify_outputs_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
+    substage_name: str | None = None,
+    force_rebuild: bool = False,
+    handler=None,
+) -> ReuseDecision:
+    normalized_units = _normalize_unit_ids(tuple(unit_ids))
+    if handler is not None and hasattr(handler, "get_stage_reuse_decision"):
+        return handler.get_stage_reuse_decision(
+            layout,
+            stage_name,
+            normalized_units,
+            substage_name=substage_name,
+            force_rebuild=force_rebuild,
+        )
+    if handler is not None and hasattr(handler, "get_reusable_units"):
+        reusable = tuple(
+            handler.get_reusable_units(
+                layout,
+                stage_name,
+                normalized_units,
+                substage_name=substage_name,
+                force_rebuild=force_rebuild,
+            )
+        )
+        if force_rebuild or not reusable:
+            return ReuseDecision(kind="none", reusable_unit_ids=reusable, reason="force_rebuild" if force_rebuild else "no_reusable_units")
+        if len(reusable) == len(normalized_units):
+            return ReuseDecision(kind="full", reusable_unit_ids=reusable, reason="all_units_reusable")
+        return ReuseDecision(kind="partial", reusable_unit_ids=reusable, reason="some_units_reusable")
+    reusable = tuple(get_reusable_units(
+        layout,
+        stage_name,
+        normalized_units,
+        substage_name=substage_name,
+        force_rebuild=force_rebuild,
+    ))
+    if force_rebuild or not reusable:
+        return ReuseDecision(kind="none", reusable_unit_ids=reusable, reason="force_rebuild" if force_rebuild else "no_reusable_units")
+    if len(reusable) == len(normalized_units):
+        return ReuseDecision(kind="full", reusable_unit_ids=reusable, reason="all_units_reusable")
+    return ReuseDecision(kind="partial", reusable_unit_ids=reusable, reason="some_units_reusable")
 
 
-def replace_llm_judge_details_by_unit_ids(
-    rows: list[LlmJudgeDetailRecord],
-    replacements: list[LlmJudgeDetailRecord],
-    *,
-    active_unit_ids: set[str],
-) -> list[LlmJudgeDetailRecord]:
-    kept = [row for row in rows if row.id not in active_unit_ids]
-    deduped: dict[str, LlmJudgeDetailRecord] = {}
-    ordered_rows = kept + list(replacements)
-    for index, row in enumerate(ordered_rows):
-        key = row.id or f"{row.source_id}:{row.text}:{row.label}:{index}"
-        deduped[key] = row
-    return list(deduped.values())
+def get_infer_reuse_decision(layout, *, force_rebuild: bool = False) -> ReuseDecision:
+    if force_rebuild:
+        return ReuseDecision(kind="none", reason="force_rebuild")
+    infer_manifest_path = layout.stage_manifest_path("infer")
+    align_manifest_path = layout.stage_manifest_path("align")
+    if not infer_manifest_path.exists():
+        return ReuseDecision(kind="none", reason="missing_manifest")
+    infer_manifest = read_stage_manifest(infer_manifest_path)
+    stored_signature = str(infer_manifest.metadata.get("upstream_signature", "") or "")
+    if not align_manifest_path.exists():
+        if not stored_signature and _infer_manifest_has_complete_judgments(infer_manifest):
+            return ReuseDecision(kind="full", reason="legacy_manifest_without_upstream_manifest")
+        return ReuseDecision(kind="none", reason="missing_upstream_manifest")
+    align_manifest = read_stage_manifest(align_manifest_path)
+    upstream_signature = build_upstream_signature(align_manifest)
+    if stored_signature == upstream_signature:
+        return ReuseDecision(kind="full", upstream_signature=upstream_signature, reason="upstream_unchanged")
+    if stored_signature and align_manifest.stage == "align" and align_manifest.unit == "concept":
+        legacy_align_manifest = replace(align_manifest, unit="node")
+        if stored_signature == build_upstream_signature(legacy_align_manifest):
+            return ReuseDecision(kind="full", upstream_signature=upstream_signature, reason="align_unit_metadata_migrated")
+    if not stored_signature:
+        return ReuseDecision(kind="full", upstream_signature=upstream_signature, reason="legacy_manifest_without_signature")
+    return ReuseDecision(kind="none", upstream_signature=upstream_signature, reason="upstream_changed")
 
 
-def replace_classify_pending_by_unit_ids(
-    rows: list[ClassifyPendingRecord],
-    replacements: list[ClassifyPendingRecord],
-    *,
-    active_unit_ids: set[str],
-) -> list[ClassifyPendingRecord]:
-    deduped: dict[str, ClassifyPendingRecord] = {}
-    for row in [item for item in rows if item.id not in active_unit_ids] + list(replacements):
-        deduped[row.id] = row
-    return list(deduped.values())
+def _infer_manifest_has_complete_judgments(manifest: StageStateManifest) -> bool:
+    if not manifest.substages:
+        return False
+    for pass_state in manifest.substages.values():
+        recall_state = pass_state.substages.get("recall")
+        judge_state = pass_state.substages.get("judge")
+        recalled_pairs = int((recall_state.stats if recall_state is not None else pass_state.stats).get("pair_count", 0) or 0)
+        judged_pairs = int((judge_state.stats if judge_state is not None else pass_state.stats).get("judgment_count", 0) or 0)
+        if judged_pairs < recalled_pairs:
+            return False
+    return True
 
 
-def replace_extract_inputs(
-    rows: list[ExtractInputRecord],
-    replacements: list[ExtractInputRecord],
-    *,
-    graph_bundle: GraphBundle,
-    active_source_ids: set[str],
-) -> list[ExtractInputRecord]:
-    owners = owner_document_by_node(graph_bundle)
-    kept = [
-        row
-        for row in rows
-        if owner_source_id_for_node(owners, row.id) not in active_source_ids
-    ]
-    return filter_extract_inputs_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
+def merge_stage_manifest(layout, manifest: StageStateManifest) -> StageStateManifest:
+    write_stage_manifest(layout.stage_manifest_path(manifest.stage), manifest)
+    return manifest
 
 
-def replace_extract_inputs_by_unit_ids(
-    rows: list[ExtractInputRecord],
-    replacements: list[ExtractInputRecord],
-    *,
-    graph_bundle: GraphBundle,
-    active_unit_ids: set[str],
-) -> list[ExtractInputRecord]:
-    kept = [row for row in rows if row.id not in active_unit_ids]
-    return filter_extract_inputs_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
+def write_stage_artifacts(*args, **kwargs):
+    writer = kwargs.pop("writer", None)
+    if writer is None:
+        raise ValueError("write_stage_artifacts requires a writer callable.")
+    return writer(*args, **kwargs)
 
 
-def replace_extract_concepts(
-    rows: list[ExtractConceptRecord],
-    replacements: list[ExtractConceptRecord],
-    *,
-    graph_bundle: GraphBundle,
-    active_source_ids: set[str],
-) -> list[ExtractConceptRecord]:
-    owners = owner_document_by_node(graph_bundle)
-    kept = [
-        row
-        for row in rows
-        if owner_source_id_for_node(owners, row.id) not in active_source_ids
-    ]
-    return filter_extract_concepts_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
-
-
-def replace_extract_concepts_by_unit_ids(
-    rows: list[ExtractConceptRecord],
-    replacements: list[ExtractConceptRecord],
-    *,
-    graph_bundle: GraphBundle,
-    active_unit_ids: set[str],
-) -> list[ExtractConceptRecord]:
-    kept = [row for row in rows if row.id not in active_unit_ids]
-    return filter_extract_concepts_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
-
-
-def replace_aggregate_concepts(
-    rows: list[AggregateConceptRecord],
-    replacements: list[AggregateConceptRecord],
-    *,
-    graph_bundle: GraphBundle,
-    active_source_ids: set[str],
-) -> list[AggregateConceptRecord]:
-    owners = owner_document_by_node(graph_bundle)
-    kept = [
-        row
-        for row in rows
-        if owner_source_id_for_node(owners, row.root) not in active_source_ids
-    ]
-    return filter_aggregate_concepts_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
-
-
-def replace_aggregate_concepts_by_unit_ids(
-    rows: list[AggregateConceptRecord],
-    replacements: list[AggregateConceptRecord],
-    *,
-    graph_bundle: GraphBundle,
-    active_unit_ids: set[str],
-) -> list[AggregateConceptRecord]:
-    kept = [row for row in rows if row.root not in active_unit_ids]
-    return filter_aggregate_concepts_by_graph(kept + list(replacements), graph_bundle=graph_bundle)
-
-
-def select_extract_inputs(
-    rows: list[ExtractInputRecord],
-    *,
-    graph_bundle: GraphBundle,
-    active_source_ids: set[str],
-) -> list[ExtractInputRecord]:
-    owners = owner_document_by_node(graph_bundle)
-    filtered = [
-        row
-        for row in filter_extract_inputs_by_graph(rows, graph_bundle=graph_bundle)
-        if owner_source_id_for_node(owners, row.id) in active_source_ids
-    ]
-    return sorted(filtered, key=lambda row: row.id)
-
-
-def select_extract_concepts(
-    rows: list[ExtractConceptRecord],
-    *,
-    graph_bundle: GraphBundle,
-    active_source_ids: set[str],
-) -> list[ExtractConceptRecord]:
-    owners = owner_document_by_node(graph_bundle)
-    filtered = [
-        row
-        for row in filter_extract_concepts_by_graph(rows, graph_bundle=graph_bundle)
-        if owner_source_id_for_node(owners, row.id) in active_source_ids
-    ]
-    return sorted(filtered, key=lambda row: row.id)
-
-
-def select_aggregate_concepts(
-    rows: list[AggregateConceptRecord],
-    *,
-    graph_bundle: GraphBundle,
-    active_source_ids: set[str],
-) -> list[AggregateConceptRecord]:
-    owners = owner_document_by_node(graph_bundle)
-    filtered = [
-        row
-        for row in filter_aggregate_concepts_by_graph(rows, graph_bundle=graph_bundle)
-        if owner_source_id_for_node(owners, row.root) in active_source_ids
-    ]
-    return sorted(filtered, key=lambda row: (row.root, row.parent, row.id))
-
-
-def replace_infer_outputs(
-    graph_bundle: GraphBundle,
-    *,
-    active_source_ids: set[str],
-) -> GraphBundle:
-    del active_source_ids
-    return deduplicate_graph(graph_bundle)
+def merge_stage_artifacts(*args, **kwargs):
+    merger = kwargs.pop("merger", None)
+    if merger is None:
+        raise ValueError("merge_stage_artifacts requires a merger callable.")
+    return merger(*args, **kwargs)

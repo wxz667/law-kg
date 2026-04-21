@@ -7,7 +7,7 @@ from typing import Callable
 
 from ...contracts import ExtractInputRecord
 from ...contracts import ExtractConceptRecord
-from ...pipeline.incremental import owner_document_by_node, owner_source_id_for_node
+from ...pipeline.handlers.graph import owner_document_by_node, owner_source_id_for_node
 from ...pipeline.runtime import PipelineRuntime
 from .llm import extract_concepts_batch, resolve_extract_runtime_config
 from .types import ExtractResult

@@ -5,8 +5,7 @@ import re
 from datetime import date
 from pathlib import Path
 
-from builder.io.json_store import read_json, write_json
-
+from .io import read_json, write_json
 from .models import LawMetadata
 
 DOC_EXTENSION = ".docx"

@@ -37,19 +37,25 @@ def update_stats(
     target_count: int,
     source_category: str,
 ) -> None:
-    stats["model_decision_count"] += int(decision_source.startswith("model_") or decision_source.startswith("rule_corrected_"))
-    stats["llm_arbiter_count"] += int(decision_source in {"llm_arbiter", "rule_corrected_llm", "rule_corrected_title_llm"})
-    stats["rule_corrected_count"] += int(decision_source.startswith("rule_corrected_"))
+    stats["model_decision_count"] = int(stats.get("model_decision_count", 0)) + int(
+        decision_source.startswith("model_") or decision_source.startswith("rule_corrected_")
+    )
+    stats["llm_arbiter_count"] = int(stats.get("llm_arbiter_count", 0)) + int(
+        decision_source in {"llm_arbiter", "rule_corrected_llm", "rule_corrected_title_llm"}
+    )
+    stats["rule_corrected_count"] = int(stats.get("rule_corrected_count", 0)) + int(
+        decision_source.startswith("rule_corrected_")
+    )
     if relation_type == "INTERPRETS":
-        stats["interprets_count"] += target_count
+        stats["interprets_count"] = int(stats.get("interprets_count", 0)) + target_count
         if source_category == "interpretation":
-            stats["judicial_interprets_count"] += target_count
+            stats["judicial_interprets_count"] = int(stats.get("judicial_interprets_count", 0)) + target_count
     else:
-        stats["references_count"] += target_count
+        stats["references_count"] = int(stats.get("references_count", 0)) + target_count
         if source_category == "interpretation":
-            stats["judicial_references_count"] += target_count
+            stats["judicial_references_count"] = int(stats.get("judicial_references_count", 0)) + target_count
         else:
-            stats["ordinary_reference_count"] += target_count
+            stats["ordinary_reference_count"] = int(stats.get("ordinary_reference_count", 0)) + target_count
     keyed = f"{source_category}_{relation_type.lower()}"
     stats[keyed] = int(stats.get(keyed, 0)) + target_count
 

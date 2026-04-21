@@ -83,12 +83,20 @@ class AggregateBatchResult:
     retry_count: int = 0
 
 
+class MissingAggregateInputIdsError(ValueError):
+    def __init__(self, missing_input_ids: list[str], concepts: list[AggregateConceptRecord]) -> None:
+        self.missing_input_ids = list(missing_input_ids)
+        self.concepts = list(concepts)
+        first_missing = self.missing_input_ids[0] if self.missing_input_ids else ""
+        super().__init__(f"Aggregate response is missing input id: {first_missing}")
+
+
 def resolve_aggregate_runtime_config(runtime: Any) -> AggregateRuntimeConfig:
-    raw = dict(runtime.aggregate_config().get("llm_aggregate", {}))
+    raw = dict(runtime.aggregate_config())
     provider = str(raw.get("provider", "")).strip()
     model = str(raw.get("model", "")).strip()
     if not provider or not model:
-        raise ValueError("builder.aggregate.llm_aggregate must define non-empty provider and model.")
+        raise ValueError("builder.aggregate must define non-empty provider and model.")
     params = validate_provider_api_params(raw.get("params", {}))
     params.setdefault("temperature", 0.0)
     params.setdefault("max_tokens", 2048)
@@ -120,44 +128,90 @@ def aggregate_concepts_batch(runtime: Any, inputs: list[AggregateInputRecord]) -
         return AggregateBatchResult(concepts=[], errors=[], failed_input_ids=[])
     runtime_config = resolve_aggregate_runtime_config(runtime)
     request_config = build_request_config(runtime_config)
-    prompt = build_aggregate_prompt(inputs)
     errors: list[dict[str, Any]] = []
-    for attempt in range(1, runtime_config.max_retries + 1):
-        try:
-            raw = runtime.generate_text(prompt, request_config)
-            concepts = parse_aggregate_response(raw, inputs)
+    concepts_by_input_id: dict[str, list[AggregateConceptRecord]] = {}
+    pending_inputs: list[AggregateInputRecord] = []
+    request_count = 0
+
+    try:
+        request_count += 1
+        raw = runtime.generate_text(build_aggregate_prompt(inputs), request_config)
+        concepts, missing_input_ids = parse_aggregate_response_parts(raw, inputs)
+        _store_aggregate_concepts(concepts_by_input_id, concepts)
+        if not missing_input_ids:
             return AggregateBatchResult(
-                concepts=concepts,
+                concepts=_ordered_aggregate_concepts(inputs, concepts_by_input_id),
                 errors=[],
                 failed_input_ids=[],
-                request_count=attempt,
-                retry_count=max(attempt - 1, 0),
+                request_count=request_count,
+                retry_count=0,
             )
-        except (ProviderResponseError, ValueError, json.JSONDecodeError) as exc:
-            errors.append(
-                {
-                    "error_type": exc.__class__.__name__,
-                    "message": str(exc),
-                    "attempt": attempt,
-                    "input_ids": [row.id for row in inputs],
-                }
-            )
-        except Exception as exc:
-            errors.append(
-                {
-                    "error_type": exc.__class__.__name__,
-                    "message": str(exc),
-                    "attempt": attempt,
-                    "input_ids": [row.id for row in inputs],
-                }
-            )
+        missing_error = MissingAggregateInputIdsError(missing_input_ids, concepts)
+        errors.append(_format_aggregate_error(missing_error, 1, inputs))
+        missing_set = set(missing_input_ids)
+        pending_inputs = [row for row in inputs if row.id in missing_set]
+    except (ProviderResponseError, ValueError, json.JSONDecodeError) as exc:
+        errors.append(_format_aggregate_error(exc, 1, inputs))
+        pending_inputs = list(inputs)
+    except Exception as exc:
+        errors.append(_format_aggregate_error(exc, 1, inputs))
+        pending_inputs = list(inputs)
+
+    failed_input_ids: list[str] = []
+    for row in pending_inputs:
+        recovered = False
+        for attempt in range(2, runtime_config.max_retries + 1):
+            try:
+                request_count += 1
+                raw = runtime.generate_text(build_aggregate_prompt([row]), request_config)
+                concepts = parse_aggregate_response(raw, [row])
+                concepts_by_input_id[row.id] = list(concepts)
+                recovered = True
+                break
+            except (ProviderResponseError, ValueError, json.JSONDecodeError) as exc:
+                errors.append(_format_aggregate_error(exc, attempt, [row]))
+            except Exception as exc:
+                errors.append(_format_aggregate_error(exc, attempt, [row]))
+        if not recovered:
+            failed_input_ids.append(row.id)
+
+    concepts = _ordered_aggregate_concepts(inputs, concepts_by_input_id)
+    if not failed_input_ids:
+        errors = []
     return AggregateBatchResult(
-        concepts=[],
+        concepts=concepts,
         errors=errors,
-        failed_input_ids=[row.id for row in inputs],
-        request_count=runtime_config.max_retries,
-        retry_count=max(runtime_config.max_retries - 1, 0),
+        failed_input_ids=failed_input_ids,
+        request_count=request_count,
+        retry_count=max(request_count - 1, 0),
     )
+
+
+def _format_aggregate_error(exc: Exception, attempt: int, inputs: list[AggregateInputRecord]) -> dict[str, Any]:
+    return {
+        "error_type": exc.__class__.__name__,
+        "message": str(exc),
+        "attempt": attempt,
+        "input_ids": [row.id for row in inputs],
+    }
+
+
+def _store_aggregate_concepts(
+    concepts_by_input_id: dict[str, list[AggregateConceptRecord]],
+    concepts: list[AggregateConceptRecord],
+) -> None:
+    for concept in concepts:
+        concepts_by_input_id.setdefault(concept.root, []).append(concept)
+
+
+def _ordered_aggregate_concepts(
+    inputs: list[AggregateInputRecord],
+    concepts_by_input_id: dict[str, list[AggregateConceptRecord]],
+) -> list[AggregateConceptRecord]:
+    concepts: list[AggregateConceptRecord] = []
+    for row in inputs:
+        concepts.extend(concepts_by_input_id.get(row.id, []))
+    return concepts
 
 
 def build_aggregate_prompt(inputs: list[AggregateInputRecord]) -> list[dict[str, str]]:
@@ -180,6 +234,16 @@ def build_aggregate_prompt(inputs: list[AggregateInputRecord]) -> list[dict[str,
 
 
 def parse_aggregate_response(raw: str, inputs: list[AggregateInputRecord]) -> list[AggregateConceptRecord]:
+    concepts, missing_input_ids = parse_aggregate_response_parts(raw, inputs)
+    if missing_input_ids:
+        raise MissingAggregateInputIdsError(missing_input_ids, concepts)
+    return concepts
+
+
+def parse_aggregate_response_parts(
+    raw: str,
+    inputs: list[AggregateInputRecord],
+) -> tuple[list[AggregateConceptRecord], list[str]]:
     payload = decode_first_json_payload(strip_markdown_fence(raw))
     items = payload if isinstance(payload, list) else payload.get("items", [])
     if not isinstance(items, list):
@@ -197,15 +261,17 @@ def parse_aggregate_response(raw: str, inputs: list[AggregateInputRecord]) -> li
         items_by_id[source_id] = item
 
     records: list[AggregateConceptRecord] = []
+    missing_input_ids: list[str] = []
     for expected in inputs:
         item = items_by_id.get(expected.id)
         if item is None:
-            raise ValueError(f"Aggregate response is missing input id: {expected.id}")
+            missing_input_ids.append(expected.id)
+            continue
         raw_concepts = item.get("concepts", [])
         if not isinstance(raw_concepts, list):
             raise ValueError(f"Aggregate response concepts for {expected.id} must be a list.")
         records.extend(flatten_structured_concepts(expected.id, postprocess_aggregate_concepts(raw_concepts)))
-    return records
+    return records, missing_input_ids
 
 
 def postprocess_aggregate_concepts(raw_concepts: list[dict[str, Any]]) -> list[AggregateCoreConcept]:

@@ -42,9 +42,9 @@ def render_progress(
     use_color: bool,
     final: bool = False,
 ) -> None:
-    total = max(total, 1)
-    current = min(max(current, 0), total)
-    ratio = current / total
+    total = max(int(total), 0)
+    current = 0 if total <= 0 else min(max(int(current), 0), total)
+    ratio = 0.0 if total <= 0 else current / total
     filled = int(BAR_WIDTH * ratio)
     bar = FILLED_CHAR * filled + EMPTY_CHAR * (BAR_WIDTH - filled)
     stage_label = format_stage_label(label)
@@ -117,30 +117,30 @@ class StageBarDisplay:
             self.finalizing = False
             self.last_signature = None
             self.stage_started_at = time.monotonic()
-            self.current_progress = (0, 1)
+            self.current_progress = (0, 0)
             self.bar_open = True
 
     def update(self, current: int, total: int) -> None:
         self.finalizing = False
-        total = max(total, 1)
-        current = min(max(current, 0), total)
+        total = max(int(total), 0)
+        current = 0 if total <= 0 else min(max(int(current), 0), total)
         signature = (current, total)
         with self._lock:
             self.current_progress = signature
             should_render = signature != self.last_signature
             was_open = self.bar_open
             self.last_signature = signature
-            self.bar_open = current < total
+            self.bar_open = total > 0 and current < total
             current_stage = self.current_stage or "stage"
             started_at = self.stage_started_at
-        if should_render or (current >= total and was_open):
+        if should_render or ((total <= 0 or current >= total) and was_open):
             render_progress(
                 current_stage,
                 current,
                 total,
                 time.monotonic() - started_at,
                 use_color=self.use_color,
-                final=current >= total,
+                final=total <= 0 or current >= total,
             )
 
     def handle(self, stage_name: str, current: int, total: int) -> None:
@@ -235,7 +235,7 @@ class StageBarDisplay:
                 current, total = self.current_progress
                 stage = self.current_stage or "stage"
                 started_at = self.stage_started_at
-            if current >= total:
+            if total <= 0 or current >= total:
                 continue
             render_progress(
                 stage,

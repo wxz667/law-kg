@@ -1,5 +1,5 @@
-from .docx_reader import read_source_document, split_logical_documents
-from .json_store import (
+from .reader import read_source_document, split_logical_documents
+from .store import (
     read_aggregate_concepts,
     read_align_canonical_concepts,
     read_align_pairs,
@@ -10,6 +10,8 @@ from .json_store import (
     read_embedded_concepts,
     read_extract_concepts,
     read_extract_inputs,
+    read_infer_pairs,
+    read_infer_relations,
     read_job_log,
     read_json,
     read_jsonl,
@@ -33,6 +35,8 @@ from .json_store import (
     write_embedded_concepts,
     write_extract_concepts,
     write_extract_inputs,
+    write_infer_pairs,
+    write_infer_relations,
     write_job_log,
     write_json,
     write_jsonl,
@@ -61,6 +65,8 @@ __all__ = [
     "read_embedded_concepts",
     "read_extract_concepts",
     "read_extract_inputs",
+    "read_infer_pairs",
+    "read_infer_relations",
     "read_job_log",
     "read_json",
     "read_jsonl",
@@ -86,6 +92,8 @@ __all__ = [
     "write_embedded_concepts",
     "write_extract_concepts",
     "write_extract_inputs",
+    "write_infer_pairs",
+    "write_infer_relations",
     "write_job_log",
     "write_json",
     "write_jsonl",

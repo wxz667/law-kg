@@ -10,6 +10,7 @@ STAGE_OUTPUT_DIRS = {
     "extract": "05_extract",
     "aggregate": "06_aggregate",
     "align": "07_align",
+    "infer": "08_infer",
 }
 
 
@@ -41,6 +42,8 @@ class BuildLayout:
             return self.aggregate_concepts_path()
         if stage_name == "align":
             return self.stage_nodes_path("align")
+        if stage_name == "infer":
+            return self.stage_nodes_path("infer")
         if self.stage_nodes_path(stage_name).exists():
             return self.stage_nodes_path(stage_name)
         return self.stage_edges_path(stage_name)
@@ -77,6 +80,15 @@ class BuildLayout:
 
     def align_relations_path(self) -> Path:
         return self.stage_dir("align") / "relations.jsonl"
+
+    def infer_pairs_path(self, pass_index: int) -> Path:
+        return self.stage_dir("infer") / f"pairs_{int(pass_index)}.jsonl"
+
+    def infer_relations_path(self) -> Path:
+        return self.stage_dir("infer") / "relations.jsonl"
+
+    def infer_pair_paths(self) -> list[Path]:
+        return sorted(self.stage_dir("infer").glob("pairs_*.jsonl"))
 
     def normalize_documents_dir(self) -> Path:
         return self.stage_dir("normalize") / "documents"

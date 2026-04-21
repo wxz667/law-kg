@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 
 from ...utils.numbers import chinese_number_to_int, int_to_cn
-from ...utils.reference_graph import ancestor_at_level, previous_sibling, tail_label
+from ...utils.reference import ancestor_at_level, previous_sibling, tail_label
 from .patterns import NON_TARGET_PAREN_RE, PARALLEL_ITEM_GROUP_RE
 from .types import ReferenceCandidate, ResolvedReference
 

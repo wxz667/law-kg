@@ -9,7 +9,6 @@ from pathlib import Path
 from .io import read_stage_edges, read_stage_nodes, write_jsonl
 from .pipeline.orchestrator import (
     STAGE_SEQUENCE,
-    build_batch_knowledge_graph,
     build_knowledge_graph,
     resolve_source_id,
 )
@@ -136,20 +135,18 @@ def run_build_command(
             cancel_event=cancel_event,
         )
 
-    def handle_progress(stage_name: str, current: int, total: int) -> None:
-        display.handle(stage_name, current, total)
-
     category = list(args.category) if args.category else None
-    return build_batch_knowledge_graph(
+    return build_knowledge_graph(
         data_root=data_root,
         category=category,
+        all_sources=bool(args.all),
         start_stage=args.start_stage,
         through_stage=args.through_stage,
         force_rebuild=args.rebuild,
         incremental=args.incremental,
         report_progress=False,
         discovery_callback=display.announce_discovery,
-        progress_callback=handle_progress,
+        stage_progress_callback=display.handle,
         stage_summary_callback=display.stage_summary,
         finalizing_callback=display.finalizing_hint,
         stage_error_callback=display.stage_error,

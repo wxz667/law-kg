@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from ...utils.document_layout import (
+from ...utils.layout import (
     APPENDIX_RE,
     ARTICLE_RE,
     CHAPTER_RE,
@@ -16,14 +16,10 @@ from ...utils.document_layout import (
     SPACE_RE,
     SUB_ITEM_MARKER_RE,
 )
-from ...contracts.graph import load_graph_schema
+from ...contracts import contains_edge_by_levels, graph_level_order, level_to_node_type
 NUMERIC_ITEM_HEADING_RE = re.compile(r"^(?:[0-9０-９]+[.．、]|(?:（|\()[0-9０-９]+(?:）|\))).+$")
 PURE_INTEGER_RE = re.compile(r"^[0-9０-９]+$")
 
-SCHEMA = load_graph_schema()
-STRUCTURAL_EDGES = {
-    (item["parent_level"], item["child_level"]): item["edge_type"]
-    for item in SCHEMA.get("structural_edges", [])
-}
-LEVEL_ORDER = SCHEMA.get("levels", [])
-LEVEL_TO_NODE_TYPE = SCHEMA.get("level_to_node_type", {})
+STRUCTURAL_EDGES = contains_edge_by_levels()
+LEVEL_ORDER = graph_level_order()
+LEVEL_TO_NODE_TYPE = level_to_node_type()

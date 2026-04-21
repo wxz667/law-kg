@@ -16,7 +16,7 @@ def finalize_appendices(
     counters: dict[str, int],
 ) -> None:
     for appendix_no, appendix_label, appendix_lines in split_appendix_blocks(unit.appendix_lines):
-        appendix_node = create_appendix_node(source_id=unit.source_id, counters=counters, name=appendix_label, order=appendix_no)
+        appendix_node = create_appendix_node(source_id=unit.source_id, counters=counters, name=appendix_label)
         nodes.append(appendix_node)
         edges.append(build_edge(document_node.id, appendix_node.id, structural_edge_type(document_node.level, "appendix")))
         block_text = "\n".join(line.strip() for line in appendix_lines if line.strip()).strip()

@@ -477,6 +477,7 @@ class EquivalenceRecord:
     description: str
     member_ids: list[str]
     root_ids: list[str]
+    representative_member_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -485,6 +486,7 @@ class EquivalenceRecord:
             "description": self.description,
             "member_ids": list(self.member_ids),
             "root_ids": list(self.root_ids),
+            "representative_member_id": self.representative_member_id,
         }
 
     @classmethod
@@ -495,6 +497,7 @@ class EquivalenceRecord:
             description=str(payload.get("description", "")),
             member_ids=[str(value) for value in payload.get("member_ids", []) if str(value).strip()],
             root_ids=[str(value) for value in payload.get("root_ids", []) if str(value).strip()],
+            representative_member_id=str(payload.get("representative_member_id", "")),
         )
 
 
@@ -517,6 +520,49 @@ class AlignRelationRecord:
             left_id=str(payload["left_id"]),
             right_id=str(payload["right_id"]),
             relation=str(payload.get("relation", "")),
+        )
+
+
+@dataclass(frozen=True)
+class InferPairRecord:
+    left_id: str
+    right_id: str
+    pass_index: int
+    semantic_score: float = 0.0
+    aa_score: float = 0.0
+    ca_score: float = 0.0
+    bridge_score: float = 0.0
+    score: float = 0.0
+    relation: str = ""
+    strength: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "left_id": self.left_id,
+            "right_id": self.right_id,
+            "pass_index": int(self.pass_index),
+            "semantic_score": float(self.semantic_score),
+            "aa_score": float(self.aa_score),
+            "ca_score": float(self.ca_score),
+            "bridge_score": float(self.bridge_score),
+            "score": float(self.score),
+            "relation": self.relation,
+            "strength": int(self.strength),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "InferPairRecord":
+        return cls(
+            left_id=str(payload["left_id"]),
+            right_id=str(payload["right_id"]),
+            pass_index=int(payload.get("pass_index", 0) or 0),
+            semantic_score=float(payload.get("semantic_score", 0.0) or 0.0),
+            aa_score=float(payload.get("aa_score", 0.0) or 0.0),
+            ca_score=float(payload.get("ca_score", 0.0) or 0.0),
+            bridge_score=float(payload.get("bridge_score", 0.0) or 0.0),
+            score=float(payload.get("score", 0.0) or 0.0),
+            relation=str(payload.get("relation", "")),
+            strength=int(payload.get("strength", 0) or 0),
         )
 
 

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ...utils.document_layout import compact_text_key
+from ...utils.layout import compact_text_key
 
 
 def load_metadata_items(metadata_root: Path) -> list[dict[str, Any]]:

@@ -11,6 +11,8 @@ from utils.llm.base import (
     validate_provider_api_params,
 )
 
+from ...pipeline.runtime import resolve_builder_substage_config
+
 
 PROMPT = """你是法律知识图谱中的显式关系仲裁模型。
 
@@ -70,12 +72,11 @@ class RelationConflictRuntimeConfig:
 
 
 def resolve_llm_conflict_runtime_config(runtime: Any, *, default_batch_size: int = 1) -> RelationConflictRuntimeConfig:
-    classify_config = runtime.classify_config()
-    raw = dict(classify_config.get("llm_conflict", {}))
+    raw = resolve_builder_substage_config(runtime, "classify", "judge")
     provider = str(raw.get("provider", "")).strip()
     model = str(raw.get("model", "")).strip()
     if not provider or not model:
-        raise ValueError("builder.classify.llm_conflict must define non-empty provider and model.")
+        raise ValueError("builder.classify.judge must define non-empty provider and model.")
 
     batch_size = max(int(raw.get("batch_size", default_batch_size or 1)), 1)
     concurrent_requests = max(int(raw.get("concurrent_requests", 1)), 1)
@@ -88,7 +89,7 @@ def resolve_llm_conflict_runtime_config(runtime: Any, *, default_batch_size: int
     minimum_required_tokens = 48 + (batch_size * 64)
     if max_tokens < minimum_required_tokens:
         raise ValueError(
-            "builder.classify.llm_conflict params are inconsistent: "
+            "builder.classify.judge params are inconsistent: "
             f"batch_size={batch_size} requires max_tokens>={minimum_required_tokens}, got {max_tokens}."
         )
     return RelationConflictRuntimeConfig(

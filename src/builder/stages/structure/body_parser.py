@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ...contracts import DocumentUnitRecord, EdgeRecord, NodeRecord
-from ...utils.document_layout import looks_like_heading_continuation
+from ...utils.layout import looks_like_heading_continuation
 from ...utils.locator import node_locator_from_node_id, source_id_from_node_id
 from ...utils.numbers import to_fullwidth_digit_text
 from .helpers import (
@@ -118,7 +118,6 @@ def emit_structured_document_body(
                 line=line,
                 source_id=unit.source_id,
                 counters=counters,
-                order=body_index,
                 parent_path=toc_parent_path(parent.id),
             )
             nodes.append(toc_node)
@@ -191,7 +190,6 @@ def emit_hierarchical_title_outline_body(
             source_id=unit.source_id,
             counters=temp_counters,
             name=chapter_heading_line,
-            order=chapter_order,
             parent_path=toc_parent_path(document_node.id),
         )
         temp_nodes.append(chapter_node)
@@ -258,7 +256,6 @@ def emit_candidate_title_sections(
             source_id=source_id,
             counters=counters,
             name=section_heading_line,
-            order=section_order,
             parent_path=toc_parent_path(chapter_node.id),
         )
         nodes.append(section_node)
@@ -447,7 +444,6 @@ def emit_section_outline_block_if_possible(
         source_id=source_id,
         counters=counters,
         name=heading,
-        order=int(counters.get("section", 0)) + 1,
         parent_path=toc_parent_path(parent.id),
     )
     nodes.append(section_node)
@@ -524,7 +520,6 @@ def emit_candidate_outline_block(
             source_id=source_id,
             counters=counters,
             name=heading_text,
-            order=article_index,
             parent_path=toc_parent_path(parent.id),
         )
         nodes.append(section_node)

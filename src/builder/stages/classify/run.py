@@ -4,9 +4,9 @@ import threading
 from typing import Any, Callable
 
 from ...contracts import ClassifyPendingRecord, GraphBundle, ReferenceCandidateRecord, ClassifyRecord
-from ...utils.legal_reference import candidate_source_category, is_legislative_interpretation_document
+from ...utils.reference import candidate_source_category, is_legislative_interpretation_document
 from ...utils.locator import owner_source_id
-from ...utils.reference_graph import build_reference_graph_context
+from ...utils.reference import build_reference_graph_context
 from .arbiter import arbitrate_uncertain_candidates
 from .classify import (
     iter_predict_interprets_batches,

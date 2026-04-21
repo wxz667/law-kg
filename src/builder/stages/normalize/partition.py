@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from ...contracts import DocumentUnitRecord, LogicalDocumentRecord
-from ...utils.document_layout import APPENDIX_RE, SEGMENT_HEADING_RE, match_heading_level, normalize_segment_heading
+from ...utils.layout import APPENDIX_RE, SEGMENT_HEADING_RE, match_heading_level, normalize_segment_heading
 
 
 def build_document_unit(logical_document: LogicalDocumentRecord) -> DocumentUnitRecord:

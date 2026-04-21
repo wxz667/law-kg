@@ -14,16 +14,19 @@
       }
     },
     "classify": {
-      "checkpoint_every": 400,
-      "interprets_filter_policy": {
+      "model": {
+        "checkpoint_every": 400,
+        "interprets_predictor": "interprets_filter.api:predict_interprets",
+        "interprets_model_dir": "interprets_filter",
         "high_confidence_true_threshold": 0.8,
         "low_confidence_false_threshold": 0.35,
         "use_llm_for_uncertain": true,
         "prediction_batch_size": 128
       },
-      "llm_conflict": {
-        "provider": "bigmodel",
-        "model": "glm-4.5-air",
+      "judge": {
+        "checkpoint_every": 400,
+        "provider": "siliconflow",
+        "model": "Pro/deepseek-ai/DeepSeek-V3.2",
         "batch_size": 4,
         "concurrent_requests": 4,
         "request_timeout_seconds": 90,
@@ -41,10 +44,13 @@
       }
     },
     "extract": {
-      "checkpoint_every": 20,
-      "llm_extract": {
-        "provider": "bigmodel",
-        "model": "glm-4.5-air",
+      "input": {
+        "checkpoint_every": 20
+      },
+      "extract": {
+        "checkpoint_every": 20,
+        "provider": "siliconflow",
+        "model": "Pro/deepseek-ai/DeepSeek-V3.2",
         "batch_size": 4,
         "concurrent_requests": 5,
         "request_timeout_seconds": 90,
@@ -63,29 +69,26 @@
     },
     "aggregate": {
       "checkpoint_every": 20,
-      "llm_aggregate": {
-        "provider": "siliconflow",
-        "model": "Pro/deepseek-ai/DeepSeek-V3.2",
-        "batch_size": 4,
-        "concurrent_requests": 5,
-        "request_timeout_seconds": 90,
-        "max_retries": 2,
-        "rate_limit": {
-          "rpm": 0,
-          "tpm": 0,
-          "retry_count": 3,
-          "backoff_seconds": 5
-        },
-        "params": {
-          "temperature": 0.0,
-          "max_tokens": 4096
-        }
+      "provider": "siliconflow",
+      "model": "Pro/deepseek-ai/DeepSeek-V3.2",
+      "batch_size": 4,
+      "concurrent_requests": 5,
+      "request_timeout_seconds": 90,
+      "max_retries": 2,
+      "rate_limit": {
+        "rpm": 0,
+        "tpm": 0,
+        "retry_count": 3,
+        "backoff_seconds": 5
+      },
+      "params": {
+        "temperature": 0.0,
+        "max_tokens": 4096
       }
     },
     "align": {
-      "checkpoint_every": 20,
       "embed": {
-        "checkpoint_every": 200,
+        "checkpoint_every": 512,
         "provider": "siliconflow",
         "model": "BAAI/bge-m3",
         "batch_size": 32,
@@ -101,14 +104,15 @@
         "params": {}
       },
       "recall": {
-        "checkpoint_every": 1000,
+        "checkpoint_every": 8192,
         "top_k_per_concept": 20,
         "similarity_threshold": 0.85,
-        "matrix_block_size": 512
+        "matrix_block_size": 512,
+        "device_preference": "auto"
       },
       "judge": {
-        "provider": "bigmodel",
-        "model": "glm-4.5-air",
+        "provider": "siliconflow",
+        "model": "Pro/deepseek-ai/DeepSeek-V3.2",
         "checkpoint_every": 100,
         "batch_size": 25,
         "concurrent_requests": 4,
@@ -125,6 +129,54 @@
           "max_tokens": 512
         }
       }
+    },
+    "infer": {
+      "recall": {
+        "checkpoint_every": 8192,
+        "matrix_block_size": 512,
+        "device_preference": "auto",
+        "semantic_candidate_multiplier": 8,
+        "semantic_candidate_floor": 64,
+        "allow_same_document_pairs": false,
+        "pass": [
+          {
+            "top_k_per_concept": 12,
+            "score_threshold": 0.7,
+            "semantic_weight": 0.6,
+            "aa_weight": 0,
+            "ca_weight": 0.3,
+            "bridge_weight": 0.1
+          },
+          {
+            "top_k_per_concept": 8,
+            "score_threshold": 0.68,
+            "semantic_weight": 0.55,
+            "aa_weight": 0.25,
+            "ca_weight": 0.1,
+            "bridge_weight": 0.1
+          }
+        ]
+      },
+      "judge": {
+        "provider": "siliconflow",
+        "model": "Pro/deepseek-ai/DeepSeek-V3.2",
+        "checkpoint_every": 100,
+        "batch_size": 20,
+        "concurrent_requests": 4,
+        "request_timeout_seconds": 90,
+        "max_retries": 2,
+        "min_strength": 7,
+        "rate_limit": {
+          "rpm": 0,
+          "tpm": 0,
+          "retry_count": 3,
+          "backoff_seconds": 5
+        },
+        "params": {
+          "temperature": 0.0,
+          "max_tokens": 1024
+        }
+      }
     }
   },
   "interprets_filter": {
@@ -134,11 +186,11 @@
         "true": 0.5,
         "false": 0.5
       },
-      "candidate_pool_multiplier": 12.0,
+      "candidate_pool_multiplier": 12,
       "candidate_pool_minimum": 1200,
       "adaptive_sampling": {
         "enabled": true,
-        "oversample_factor": 5.0,
+        "oversample_factor": 5,
         "min_positive_hint_precision": 0.15,
         "min_negative_hint_precision": 0.85,
         "max_in_flight_batches": 4
@@ -152,8 +204,8 @@
       "review_sample_size": 20
     },
     "distill": {
-      "provider": "bigmodel",
-      "model": "glm-4.7",
+      "provider": "siliconflow",
+      "model": "Pro/deepseek-ai/DeepSeek-V3.2",
       "concurrent_requests": 4,
       "batch_size": 4,
       "request_timeout_seconds": 90,
@@ -175,7 +227,7 @@
       "mixed_precision": "auto",
       "max_length": 512,
       "num_train_epochs": 1,
-      "learning_rate": 2e-05,
+      "learning_rate": 0.00002,
       "train_batch_size": 4,
       "eval_batch_size": 8,
       "weight_decay": 0.01,

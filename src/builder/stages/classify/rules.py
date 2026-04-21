@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from ...contracts import ReferenceCandidateRecord
-from ...utils.legal_reference import CATEGORY_RANK
+from ...utils.reference import CATEGORY_RANK
 
 TITLE_INTERPRET_PATTERNS = (
     re.compile(r"关于\[T\].+?\[/T\]的解释$"),

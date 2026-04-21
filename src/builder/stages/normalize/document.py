@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...contracts import LogicalDocumentRecord, NormalizedDocumentRecord
-from ...utils.document_layout import clean_text, merge_structural_heading_continuations
+from ...utils.layout import clean_text, merge_structural_heading_continuations
 from .partition import build_document_unit
 
 

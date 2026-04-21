@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ...contracts import EdgeRecord, NodeRecord, build_edge_id
-from ...utils.document_layout import match_heading_level, normalize_segment_heading
+from ...utils.layout import match_heading_level, normalize_segment_heading
 from .patterns import LEVEL_ORDER, STRUCTURAL_EDGES
 
 

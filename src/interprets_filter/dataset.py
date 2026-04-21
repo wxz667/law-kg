@@ -9,8 +9,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
 
-from builder.io import read_reference_candidates
-
+from .candidates import read_reference_candidates
 from .config import canonical_label, label_to_bool, load_interprets_filter_config, resolve_distill_runtime_config
 from .distill import distill_sample_batch
 from .io import read_jsonl, write_json, write_jsonl

@@ -5,14 +5,14 @@ from collections import Counter
 from typing import Any, Callable
 
 from ...contracts import GraphBundle, ReferenceCandidateRecord
-from ...utils.legal_reference import (
+from ...utils.reference import (
     is_excluded_reference_document,
     is_judicial_interpretation_document,
     normalize_reference_category,
     should_scan_title_candidates,
 )
 from ...utils.locator import owner_source_id
-from ...utils.reference_graph import build_reference_graph_context
+from ...utils.reference import build_reference_graph_context
 from .scan import resolve_document_worker_count, scan_documents
 from .types import DetectContext, DetectProfiling, DetectResult
 

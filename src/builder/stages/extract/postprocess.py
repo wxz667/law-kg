@@ -7,6 +7,8 @@ from ...contracts import ExtractConceptItem, ExtractConceptRecord
 GENERIC_LAW_SUFFIXES = (
     "一般规定",
     "基本规定",
+    "基本原则",
+    "适用范围",
     "定义",
     "制度",
     "法律",
@@ -16,7 +18,7 @@ GENERIC_LAW_SUFFIXES = (
     "机制",
 )
 
-_LAW_TITLE_GENERIC_PATTERN = re.compile(r"^.+法(?:一般规定|基本规定)$")
+_LAW_TITLE_GENERIC_PATTERN = re.compile(r"^.+法(?:一般规定|基本规定|适用范围)$")
 _TRIM_TAIL_PATTERN = re.compile(r"[：:、，,；;（）()\[\]【】\s]+$")
 _TRIM_HEAD_PATTERN = re.compile(r"^[：:、，,；;（）()\[\]【】\s]+")
 _DESCRIPTION_FILLER_PATTERNS = (
@@ -69,6 +71,8 @@ def postprocess_concept_name(concept: str) -> str | None:
         if not stem:
             return None
         if _LAW_TITLE_GENERIC_PATTERN.fullmatch(stem + suffix):
+            return None
+        if suffix == "适用范围" and stem.endswith("法"):
             return None
         return stem
     return text

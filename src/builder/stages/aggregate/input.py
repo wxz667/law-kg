@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ...contracts import GraphBundle
-from ...pipeline.incremental import select_extract_concepts, select_extract_inputs
+from ...pipeline.handlers.graph import select_extract_concepts, select_extract_inputs
 from .concepts import aggregate_concept_stats
 from .types import AggregateInputRecord
 

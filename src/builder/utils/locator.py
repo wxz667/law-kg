@@ -21,7 +21,7 @@ class NodeLocator:
 
 _ARTICLE_KEY_RE = re.compile(r"^(?P<article>\d{4})(?:-(?P<suffix>\d{2}))?$")
 _DOCUMENT_ID_RE = re.compile(r"^document:(?P<source>.+)$")
-_TOC_ID_RE = re.compile(r"^(?P<kind>part|chapter|section):(?P<source>[^:]+):(?P<tail>.+)$")
+_TOC_ID_RE = re.compile(r"^(?P<kind>part|chapter|section):(?P<source>.+):(?P<tail>.+)$")
 _ARTICLE_ID_RE = re.compile(r"^article:(?P<source>.+):(?P<article_key>\d{4}(?:-\d{2})?)$")
 _PARAGRAPH_ID_RE = re.compile(
     r"^paragraph:(?P<source>.+):(?P<article_key>\d{4}(?:-\d{2})?):(?P<paragraph>\d{2})$"
@@ -44,6 +44,24 @@ _APPENDIX_ID_RE = re.compile(r"^appendix:(?P<source>.+):(?P<appendix>\d{2})$")
 
 def source_id_from_node_id(node_id: str) -> str:
     if matched := _DOCUMENT_ID_RE.fullmatch(node_id):
+        return matched.group("source")
+    if matched := _TOC_ID_RE.fullmatch(node_id):
+        return matched.group("source")
+    if matched := _ARTICLE_ID_RE.fullmatch(node_id):
+        return matched.group("source")
+    if matched := _PARAGRAPH_ID_RE.fullmatch(node_id):
+        return matched.group("source")
+    if matched := _ITEM_ID_RE.fullmatch(node_id):
+        return matched.group("source")
+    if matched := _SEGMENT_ITEM_ID_RE.fullmatch(node_id):
+        return matched.group("source")
+    if matched := _SUB_ITEM_ID_RE.fullmatch(node_id):
+        return matched.group("source")
+    if matched := _SEGMENT_SUB_ITEM_ID_RE.fullmatch(node_id):
+        return matched.group("source")
+    if matched := _SEGMENT_ID_RE.fullmatch(node_id):
+        return matched.group("source")
+    if matched := _APPENDIX_ID_RE.fullmatch(node_id):
         return matched.group("source")
     parts = node_id.split(":")
     if len(parts) < 2:
@@ -168,7 +186,7 @@ def node_sort_key(node: object) -> tuple[object, ...]:
     locator = node_locator_from_node_id(node_id)
 
     if level in {"part", "chapter", "section", "concept"}:
-        return (0, int(getattr(node, "order", 0) or 0), node_id)
+        return (0, node_id)
     if level == "article" and locator is not None:
         return (1, int(locator.article_no or 0), int(locator.article_suffix or 0), node_id)
     if level == "paragraph" and locator is not None:
@@ -183,4 +201,4 @@ def node_sort_key(node: object) -> tuple[object, ...]:
         return (6, int(locator.appendix_no or 0), node_id)
     if level == "document":
         return (7, node_id)
-    return (99, int(getattr(node, "order", 0) or 0), node_id)
+    return (99, node_id)

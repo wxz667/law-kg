@@ -29,7 +29,6 @@ def create_toc_node(
     line: str,
     source_id: str,
     counters: dict[str, int],
-    order: int,
     parent_path: str = "",
 ) -> NodeRecord:
     counters[level] = _next_scoped_ordinal(counters, level, parent_path)
@@ -38,7 +37,6 @@ def create_toc_node(
         type=LEVEL_TO_NODE_TYPE[level],
         name=line,
         level=level,
-        order=order,
     )
 
 
@@ -76,7 +74,6 @@ def create_candidate_chapter_node(
     source_id: str,
     counters: dict[str, int],
     name: str,
-    order: int,
     parent_path: str = "",
 ) -> NodeRecord:
     counters["chapter"] = _next_scoped_ordinal(counters, "chapter", parent_path)
@@ -85,7 +82,6 @@ def create_candidate_chapter_node(
         type=LEVEL_TO_NODE_TYPE["chapter"],
         name=name,
         level="chapter",
-        order=order,
     )
 
 
@@ -94,7 +90,6 @@ def create_candidate_section_node(
     source_id: str,
     counters: dict[str, int],
     name: str,
-    order: int,
     parent_path: str = "",
 ) -> NodeRecord:
     counters["section"] = _next_scoped_ordinal(counters, "section", parent_path)
@@ -103,7 +98,6 @@ def create_candidate_section_node(
         type=LEVEL_TO_NODE_TYPE["section"],
         name=name,
         level="section",
-        order=order,
     )
 
 
@@ -129,10 +123,9 @@ def create_segment_node(*, source_id: str, counters: dict[str, int], name: str, 
     )
 
 
-def create_appendix_node(*, source_id: str, counters: dict[str, int], name: str, order: int) -> NodeRecord:
+def create_appendix_node(*, source_id: str, counters: dict[str, int], name: str) -> NodeRecord:
     counters["appendix"] += 1
     appendix_no = counters["appendix"]
-    del order
     return NodeRecord(
         id=node_id_from_locator(NodeLocator(kind="appendix", appendix_no=appendix_no), source_id)
         or f"appendix:{slugify(source_id)}:{appendix_no:02d}",

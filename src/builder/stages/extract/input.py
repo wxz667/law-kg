@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from ...contracts import ExtractInputRecord
-from ...utils.legal_reference import is_excluded_reference_document
+from ...utils.reference import is_excluded_reference_document
 from ...utils.locator import node_locator_from_node_id, node_sort_key, source_id_from_node_id
 from ...utils.numbers import int_to_cn
 
@@ -148,7 +148,7 @@ def _collect_extract_units(document_node, children_by_parent: dict[str, list[obj
         return [document_node]
     return [
         node
-        for node in sorted(toc_nodes, key=node_sort_key)
+        for node in toc_nodes
         if not any(child.level in TOC_LEVELS for child in children_by_parent.get(node.id, []))
     ]
 

@@ -14,7 +14,7 @@ from docx.table import Table, _Cell
 from docx.text.paragraph import Paragraph
 
 from ..utils.ids import checksum_text, slugify
-from ..utils.document_layout import (
+from ..utils.layout import (
     APPENDIX_RE,
     ARTICLE_RE,
     ARTICLE_TITLE_SUFFIX_RE,

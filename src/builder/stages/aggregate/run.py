@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 from ...contracts import AggregateConceptRecord
-from ...pipeline.incremental import owner_document_by_node, owner_source_id_for_node
+from ...pipeline.handlers.graph import owner_document_by_node, owner_source_id_for_node
 from ...pipeline.runtime import PipelineRuntime
 from .concepts import aggregate_concept_stats
 from .llm import aggregate_concepts_batch, resolve_aggregate_runtime_config
