@@ -1,57 +1,278 @@
 # data
 
-## 目录说明
+`data/` 是项目运行期数据根目录，存放源数据、builder 中间产物、阶段 manifest、`interprets_filter` 训练数据、最终 JSONL 图谱导出以及历史归档。
 
-`data/` 为项目运行期数据根目录，存放源数据、中间产物、阶段状态、训练数据与最终导出结果。
+除 `source/` 外，本目录下大多数内容都可以按阶段重新生成。删除或覆盖任何数据前，应先确认当前任务是否依赖已有增量状态。
 
 ## 目录结构
 
-### 源数据
+```text
+data/
+  source/
+    docs/
+    metadata/
+  intermediate/
+    builder/
+      01_normalize/
+      02_structure/
+      03_detect/
+      04_classify/
+      05_extract/
+      06_aggregate/
+      07_align/
+      08_infer/
+    interprets_filter/
+  manifest/
+    builder/
+  train/
+    interprets_filter/
+  exports/
+    json/
+  archive/
+```
 
-- `source/docs/`
-  原始规范性文件 `DOCX` 文档。
-- `source/metadata/`
-  与源文档对应的元数据清单。
+## source
 
-### Builder 中间产物
+`source/` 是 builder 的原始输入目录。
 
-- `intermediate/builder/01_normalize/`
-  标准化阶段产物，包括逻辑文书清洗结果与阶段索引。
-- `intermediate/builder/02_structure/`
-  结构图阶段产物，包括结构节点与结构边。
-- `intermediate/builder/03_reference_filter/`
-  显式引用候选筛选阶段产物。
-- `intermediate/builder/04_relation_classify/`
-  显式关系分类阶段产物，包括关系分类结果、LLM 仲裁记录与关系边。
-- `intermediate/builder/05_entity_extraction/`
-  实体抽取阶段产物。
-- `intermediate/builder/06_entity_alignment/`
-  实体对齐阶段产物。
-- `intermediate/builder/07_implicit_reasoning/`
-  隐式关系推理阶段产物。
+### `source/metadata/`
 
-图相关阶段正式产物采用 JSONL 文件组织，按阶段目录写入：
+存放 crawler 抓取或人工维护的 metadata 分片：
 
-- `nodes.jsonl`
-- `edges.jsonl`
+- 文件名通常为 `metadata-0001.json`、`metadata-0002.json`
+- 每个文件内容是 JSON array
+- 每个元素是一条文档 metadata
 
-### 阶段状态
+常用字段：
 
-- `manifest/builder/`
-  builder 各阶段的固定覆盖式状态文件，用于阶段复用与增量构建判断。
+- `source_id`
+- `title`
+- `issuer`
+- `publish_date`
+- `effective_date`
+- `category`
+- `status`
+- `source_url`
+- `source_format`
 
-### 训练数据
+### `source/docs/`
 
-- `train/interprets_filter/`
-  `interprets_filter` 模型的数据集切分与训练输入。
+存放原始规范性文件 `DOCX` 文档。
 
-### 最终导出
+约定：
 
-- `exports/json/`
-  最终图谱导出目录。
+- 文件必须是合法 `.docx`
+- 文件名通常来自文档标题
+- 标题重复时 crawler 会追加 `__{source_id 后 12 位}` 后缀
+- builder 以 metadata 的 `source_id` 为逻辑处理单位，不以文件名作为主键
 
-## 使用约定
+## intermediate/builder
 
-- 构建阶段不直接写数据库，所有正式产物先写入本目录
-- `manifest/builder/` 中的文件为阶段状态快照，不保留历史版本
-- `intermediate/builder/` 为运行期中间产物目录，支持重建与覆盖
+`intermediate/builder/` 是 builder 八阶段中间产物目录。阶段目录名由代码中的 `STAGE_OUTPUT_DIRS` 决定。
+
+### `01_normalize/`
+
+标准化阶段产物。
+
+```text
+01_normalize/
+  documents/{source_id}.json
+  normalize_index.json
+```
+
+`documents/{source_id}.json` 保存清洗后的逻辑文档正文、附件行和 metadata 透传字段。`normalize_index.json` 保存 normalize 阶段索引。
+
+### `02_structure/`
+
+结构图阶段产物。
+
+```text
+02_structure/
+  nodes.jsonl
+  edges.jsonl
+```
+
+包含 `DocumentNode`、`TocNode`、`ProvisionNode` 与 `CONTAINS` 边。
+
+### `03_detect/`
+
+显式引用候选阶段产物。
+
+```text
+03_detect/
+  candidates.jsonl
+```
+
+每条候选包含来源节点、引用文本、候选目标节点和目标分类。
+
+### `04_classify/`
+
+显式关系分类阶段产物。
+
+```text
+04_classify/
+  results.jsonl
+  pending.jsonl
+  llm_judgments.jsonl
+  edges.jsonl
+```
+
+- `results.jsonl`: 模型、规则或 LLM 已完成判别的候选结果
+- `pending.jsonl`: 需要 LLM 仲裁或仍待处理的候选
+- `llm_judgments.jsonl`: LLM 仲裁明细
+- `edges.jsonl`: 物化后的 `REFERENCES` / `INTERPRETS` 边
+
+`classify` 图快照的节点会从上游结构图继承；该阶段自身只写关系边。
+
+### `05_extract/`
+
+概念抽取阶段产物。
+
+```text
+05_extract/
+  inputs.jsonl
+  concepts.jsonl
+```
+
+- `inputs.jsonl`: LLM 概念抽取输入，字段为 `id`、`hierarchy`、`content`
+- `concepts.jsonl`: 抽取结果，字段为 `id`、`concepts`
+
+空概念结果不写入 `concepts.jsonl`。
+
+### `06_aggregate/`
+
+章节内概念聚合阶段产物。
+
+```text
+06_aggregate/
+  concepts.jsonl
+```
+
+字段：
+
+- `id`
+- `name`
+- `description`
+- `parent`
+- `root`
+
+`root` 指向原章节或结构节点，`parent` 指向直属上级概念；顶层概念的 `parent` 为空字符串。
+
+### `07_align/`
+
+跨章节 canonical 概念对齐阶段产物。
+
+```text
+07_align/
+  vectors.jsonl
+  pairs.jsonl
+  concepts.jsonl
+  relations.jsonl
+  nodes.jsonl
+  edges.jsonl
+```
+
+- `vectors.jsonl`: raw concept 向量
+- `pairs.jsonl`: 对齐候选及判别关系
+- `concepts.jsonl`: canonical concept 集合
+- `relations.jsonl`: canonical 概念间关系
+- `nodes.jsonl` / `edges.jsonl`: align 后图快照
+
+align 会生成 `ConceptNode`、`MENTIONS`、`RELATED_TO`、`HAS_SUBORDINATE`，并保留上游结构和显式关系。
+
+### `08_infer/`
+
+canonical 概念层隐式关系推理阶段产物。
+
+```text
+08_infer/
+  pairs_1.jsonl
+  pairs_2.jsonl
+  relations.jsonl
+  nodes.jsonl
+  edges.jsonl
+```
+
+- `pairs_{n}.jsonl`: 第 n 轮召回候选和 LLM 判别结果，包含 `relation` 与 `strength`
+- `relations.jsonl`: 被接受的隐式关系
+- `nodes.jsonl` / `edges.jsonl`: infer 后图快照
+
+当前 infer 没有 `candidates.jsonl` 或 `judgments.jsonl`；候选与判别结果合并在 `pairs_{n}.jsonl`。
+
+## intermediate/interprets_filter
+
+`intermediate/interprets_filter/` 保存解释关系分类器训练前的数据蒸馏与采样中间状态。
+
+常见文件：
+
+- `adaptive_state.json`
+- `distilled_detailed.jsonl`
+- `quality_report.json`
+- `review_samples.jsonl`
+
+该目录可由 `scripts/interprets_filter --stage dataset --rebuild` 重建。
+
+## manifest/builder
+
+`manifest/builder/` 保存 builder 各阶段累计正式产物状态：
+
+```text
+manifest/builder/
+  normalize.json
+  structure.json
+  detect.json
+  classify.json
+  extract.json
+  aggregate.json
+  align.json
+  infer.json
+```
+
+manifest 用于阶段复用、增量构建和断点恢复。它只描述当前磁盘上的累计正式产物，不保存单次运行过程统计。单次运行日志在 `../logs/builder/{job_id}.json`。
+
+## train/interprets_filter
+
+`train/interprets_filter/` 保存解释关系分类器的数据集切分和训练输入，通常由 `scripts/interprets_filter --stage dataset` 生成。
+
+该目录与 `models/interprets_filter/` 配合使用：
+
+- `data/train/interprets_filter/`: 训练数据
+- `models/interprets_filter/`: 训练后的模型
+
+## exports/json
+
+`exports/json/` 是 builder 当前最终图谱导出目录。
+
+```text
+exports/json/
+  nodes.jsonl
+  edges.jsonl
+```
+
+当 `builder` 运行到图阶段结束时，orchestrator 会把当前图快照写入这里。图阶段包括：
+
+- `structure`
+- `classify`
+- `align`
+- `infer`
+
+如果构建只运行到 `normalize`、`detect`、`extract` 或 `aggregate`，不应期望最终图导出被刷新。
+
+## archive
+
+`archive/` 存放历史中间产物、旧 manifest 或实验归档，不参与当前 builder 默认读取。
+
+使用约定：
+
+- 不要让当前阶段逻辑依赖 `archive/`
+- 若需要恢复归档数据，应明确复制回对应正式目录
+- 归档文件命名应能看出来源阶段或迁移背景
+
+## 维护约定
+
+- `source/` 是原始输入，应谨慎删除
+- `intermediate/builder/` 是阶段正式中间产物，可按阶段重建
+- `manifest/builder/` 与 `intermediate/builder/` 必须保持同一构建状态
+- `exports/json/` 是当前最终图快照，不是历史版本库
+- `logs/` 不在 `data/` 内，builder 日志位于 `../logs/builder/`
+- 文档中记录的文件名和阶段目录必须以 `src/builder/io/paths.py` 为准
