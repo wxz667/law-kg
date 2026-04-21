@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Callable
 
 from ...contracts import DocumentUnitRecord
@@ -19,17 +18,14 @@ def load_document_units(
     candidate_entries = [
         entry
         for entry in normalize_index.entries
-        if entry.status == "completed"
-        and entry.artifact_path
-        and (selected is None or entry.source_id in selected)
+        if entry.document and (selected is None or entry.source_id in selected)
     ]
     total = max(len(candidate_entries), 1)
     if progress_callback is not None:
         progress_callback(0, total)
+    documents_dir = index_path.parent / "documents"
     for index, entry in enumerate(candidate_entries, start=1):
-        if entry.status != "completed" or not entry.artifact_path:
-            continue
-        document = read_normalized_document(Path(entry.artifact_path))
+        document = read_normalized_document(documents_dir / entry.document)
         metadata = dict(document.metadata)
         source_type = str(
             metadata.get("document_type")

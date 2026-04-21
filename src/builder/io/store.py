@@ -75,33 +75,14 @@ def read_normalized_document(path: Path) -> NormalizedDocumentRecord:
 
 
 def write_normalize_index(path: Path, index: NormalizeStageIndex) -> None:
-    entries: list[dict[str, Any]] = []
-    succeeded_sources = 0
-    for entry in index.entries:
-        payload = entry.to_dict()
-        details = dict(payload.get("details", {}))
-        details.pop("reused", None)
-        payload["details"] = details
-        entries.append(payload)
-        if str(payload.get("status", "")) == "completed":
-            succeeded_sources += 1
-    write_json(
-        path,
-        {
-            "stage": index.stage,
-            "entries": entries,
-            "stats": {
-                "source_count": len(entries),
-                "succeeded_sources": succeeded_sources,
-                "failed_sources": len(entries) - succeeded_sources,
-                "reused_sources": 0,
-            },
-        },
-    )
+    write_json(path, index.to_list())
 
 
 def read_normalize_index(path: Path) -> NormalizeStageIndex:
-    return NormalizeStageIndex.from_dict(read_json(path))
+    payload = read_json(path)
+    if not isinstance(payload, list):
+        raise ValueError(f"Normalize index must be a JSON array: {path}")
+    return NormalizeStageIndex.from_list(payload)
 
 
 def write_stage_nodes(path: Path, nodes: list[NodeRecord]) -> None:

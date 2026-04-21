@@ -205,22 +205,17 @@ def subtract_source_ids(source_ids: list[str], skipped_source_ids: list[str]) ->
     return [source_id for source_id in source_ids if source_id not in skipped]
 
 
-def select_normalize_entries(index, selected_source_ids: list[str]) -> list[object]:
-    selected = set(selected_source_ids)
-    return [entry for entry in index.entries if entry.source_id in selected]
-
-
 def build_normalize_stage_stats(entries: list[object]) -> dict[str, int]:
-    skipped_count = sum(1 for entry in entries if bool(entry.details.get("reused")))
+    skipped_count = sum(1 for entry in entries if bool(getattr(entry, "reused", False)))
     succeeded_count = sum(
         1
         for entry in entries
-        if not bool(entry.details.get("reused")) and entry.status == "completed"
+        if not bool(getattr(entry, "reused", False)) and entry.status == "completed"
     )
     failed_count = sum(
         1
         for entry in entries
-        if not bool(entry.details.get("reused")) and entry.status != "completed"
+        if not bool(getattr(entry, "reused", False)) and entry.status != "completed"
     )
     return {
         "source_count": len(entries),
@@ -247,7 +242,6 @@ def resolve_stage_source_ids(layout: BuildLayout, stage_name: str, selected_sour
         completed_source_ids = {
             entry.source_id
             for entry in normalize_index.entries
-            if entry.status == "completed"
         }
         return [source_id for source_id in selected if source_id in completed_source_ids]
     return selected

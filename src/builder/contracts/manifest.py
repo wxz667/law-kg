@@ -55,7 +55,7 @@ MANIFEST_GRAPH_STAT_KEYS = {
 }
 
 MANIFEST_STAGE_STAT_KEYS: dict[str, set[str]] = {
-    "normalize": {"document_count"},
+    "normalize": {"total_count", "type_counts"},
     "structure": set(MANIFEST_GRAPH_STAT_KEYS),
     "detect": {"candidate_count"},
     "classify": {
@@ -330,11 +330,12 @@ class StageStateManifest:
 
 
 def stage_inputs(layout: BuildLayout, stage_name: str) -> list[str]:
-    data_root = layout.data_root
     if stage_name == "normalize":
+        if layout.metadata_root is None or layout.document_root is None:
+            raise ValueError("Normalize stage inputs require configured metadata and document paths.")
         return [
-            str(data_root / "source" / "metadata"),
-            str(data_root / "source" / "docs"),
+            str(layout.metadata_root),
+            str(layout.document_root),
         ]
     if stage_name == "structure":
         return [
@@ -531,11 +532,6 @@ def sanitize_manifest_stats(
                 "result_count",
                 "accepted_count",
             }
-    if stage_name == "normalize":
-        document_count = cleaned.get("document_count", stats.get("document_count"))
-        if document_count is None:
-            document_count = stats.get("work_units_completed", stats.get("succeeded_sources", stats.get("source_count", 0)))
-        cleaned["document_count"] = int(document_count or 0)
     return {
         key: value
         for key, value in cleaned.items()

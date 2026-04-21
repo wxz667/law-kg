@@ -6,13 +6,28 @@ import sys
 import threading
 from pathlib import Path
 
-from .io import read_stage_edges, read_stage_nodes, write_jsonl
+from .io import BuildLayout, write_stage_edges, write_stage_nodes
 from .pipeline.orchestrator import (
+    BuilderConfig,
     STAGE_SEQUENCE,
     build_knowledge_graph,
+    load_builder_config,
     resolve_source_id,
 )
+from .pipeline.handlers.common import load_graph_snapshot
 from .pipeline.progress import StageBarDisplay
+
+GRAPH_EXPORT_STAGES = {"structure", "classify", "align", "infer"}
+EXPORT_STAGE_GRAPH_VIEW = {
+    "structure": "structure",
+    "detect": "structure",
+    "classify": "classify",
+    "extract": "classify",
+    "aggregate": "classify",
+    "align": "align",
+    "infer": "infer",
+}
+DEFAULT_EXPORT_STAGE_ORDER = ("infer", "align", "classify", "structure")
 
 
 def add_stage_arguments(parser: argparse.ArgumentParser) -> None:
@@ -55,8 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--data-root",
-        default="data",
-        help="Path to the project data directory. Builder expects metadata under <data-root>/source/metadata.",
+        help="Override builder.data from configs/config.json.",
     )
     scope_group = parser.add_mutually_exclusive_group(required=True)
     scope_group.add_argument(
@@ -79,10 +93,50 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_export_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Export the latest available graph from builder stage artifacts.")
+    parser.add_argument(
+        "command",
+        choices=("export",),
+        help="Export stage graph artifacts without running the builder pipeline.",
+    )
+    parser.add_argument(
+        "--data-root",
+        help="Override builder.data from configs/config.json.",
+    )
+    parser.add_argument(
+        "--stage",
+        choices=STAGE_SEQUENCE,
+        help="Stage view to export. Defaults to the latest available graph stage.",
+    )
+    parser.add_argument(
+        "--target",
+        default="data/exports",
+        help="Directory where nodes.jsonl and edges.jsonl will be written.",
+    )
+    return parser
+
+
 def main() -> int:
+    raw_args = sys.argv[1:]
+    if raw_args and raw_args[0] == "export":
+        parser = build_export_parser()
+        args = parser.parse_args(raw_args)
+        try:
+            result = run_export_command(args)
+        except Exception as exc:
+            print(f"error: {exc.__class__.__name__}: {exc}", file=sys.stderr)
+            return 1
+        print(
+            "exported "
+            f"{result['stage']} graph to {result['target']} "
+            f"({result['node_count']} nodes, {result['edge_count']} edges)"
+        )
+        return 0
+
     parser = build_parser()
-    args = parser.parse_args()
-    data_root = Path(args.data_root)
+    args = parser.parse_args(raw_args)
+    builder_config = load_builder_config(data_override=Path(args.data_root) if args.data_root else None)
 
     if args.command != "build":
         parser.error(f"Unsupported command: {args.command}")
@@ -96,7 +150,7 @@ def main() -> int:
     cancel_event = threading.Event()
     previous_handler = install_interrupt_handler(cancel_event)
     try:
-        result = run_build_command(args, data_root, display, cancel_event)
+        result = run_build_command(args, builder_config, display, cancel_event)
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
         return 130
@@ -112,17 +166,17 @@ def main() -> int:
 
 def run_build_command(
     args: argparse.Namespace,
-    data_root: Path,
+    builder_config: BuilderConfig,
     display: StageBarDisplay,
     cancel_event: threading.Event,
 ) -> dict[str, object]:
     if args.source_ids:
-        resolved_source_ids = [resolve_source_id(value, data_root) for value in args.source_ids]
+        resolved_source_ids = [resolve_source_id(value, builder_config.metadata) for value in args.source_ids]
         resolved_source_ids = list(dict.fromkeys(resolved_source_ids))
         display.announce_discovery(len(resolved_source_ids))
         return build_knowledge_graph(
             source_id=resolved_source_ids,
-            data_root=data_root,
+            builder_config=builder_config,
             start_stage=args.start_stage,
             through_stage=args.through_stage,
             force_rebuild=args.rebuild,
@@ -137,7 +191,7 @@ def run_build_command(
 
     category = list(args.category) if args.category else None
     return build_knowledge_graph(
-        data_root=data_root,
+        builder_config=builder_config,
         category=category,
         all_sources=bool(args.all),
         start_stage=args.start_stage,
@@ -151,6 +205,46 @@ def run_build_command(
         finalizing_callback=display.finalizing_hint,
         stage_error_callback=display.stage_error,
         cancel_event=cancel_event,
+    )
+
+
+def run_export_command(args: argparse.Namespace) -> dict[str, object]:
+    builder_config = load_builder_config(data_override=Path(args.data_root) if args.data_root else None)
+    data_root = builder_config.data
+    target = Path(args.target).resolve()
+    layout = BuildLayout(data_root)
+    stage_name = resolve_export_stage(layout, args.stage)
+    graph = load_graph_snapshot(
+        layout,
+        stage_name,
+        stage_sequence=tuple(STAGE_SEQUENCE),
+        graph_stages=set(GRAPH_EXPORT_STAGES),
+    )
+    if not graph.nodes:
+        raise FileNotFoundError(f"No graph nodes are available for stage view: {stage_name}")
+    if not graph.edges:
+        raise FileNotFoundError(f"No graph edges are available for stage view: {stage_name}")
+    graph.validate_edge_references()
+    write_stage_nodes(target / "nodes.jsonl", graph.nodes)
+    write_stage_edges(target / "edges.jsonl", graph.edges)
+    return {
+        "stage": stage_name,
+        "target": str(target),
+        "node_count": len(graph.nodes),
+        "edge_count": len(graph.edges),
+    }
+
+
+def resolve_export_stage(layout: BuildLayout, requested_stage: str | None) -> str:
+    if requested_stage:
+        if requested_stage == "normalize":
+            raise ValueError("normalize does not produce a graph artifact and cannot be exported.")
+        return EXPORT_STAGE_GRAPH_VIEW[requested_stage]
+    for stage_name in DEFAULT_EXPORT_STAGE_ORDER:
+        if layout.stage_nodes_path(stage_name).exists() or layout.stage_edges_path(stage_name).exists():
+            return stage_name
+    raise FileNotFoundError(
+        "No graph stage artifacts found. Run builder through structure, classify, align, or infer first."
     )
 
 
@@ -177,49 +271,6 @@ def describe_build_scope(args: argparse.Namespace) -> str:
     if args.category:
         return f"category: {', '.join(str(value) for value in args.category)}"
     return "all sources"
-
-
-def split_graph_export(graph_path: Path, output_root: Path) -> None:
-    graph_path = graph_path.resolve()
-    if graph_path.is_dir():
-        nodes_path = graph_path / "nodes.jsonl"
-        edges_path = graph_path / "edges.jsonl"
-    else:
-        nodes_path = graph_path.parent / "nodes.jsonl"
-        edges_path = graph_path.parent / "edges.jsonl"
-    nodes = read_stage_nodes(nodes_path)
-    edges = read_stage_edges(edges_path)
-    neo4j_nodes = [node.to_dict() for node in nodes]
-    neo4j_edges = [
-        {
-            "id": edge.id,
-            "source": edge.source,
-            "target": edge.target,
-            "type": edge.type,
-        }
-        for edge in edges
-    ]
-    search_documents = [
-        {
-            "id": node.id,
-            "type": node.type,
-            "level": node.level,
-            "name": node.name,
-            "text": node.text,
-            "description": node.description,
-            "category": node.category,
-            "status": node.status,
-            "issuer": node.issuer,
-            "publish_date": node.publish_date,
-            "effective_date": node.effective_date,
-            "source_url": node.source_url,
-        }
-        for node in nodes
-        if node.text or node.description or node.level == "document"
-    ]
-    write_jsonl(output_root / "neo4j" / "nodes.jsonl", neo4j_nodes)
-    write_jsonl(output_root / "neo4j" / "edges.jsonl", neo4j_edges)
-    write_jsonl(output_root / "elasticsearch" / "documents.jsonl", search_documents)
 
 
 def install_interrupt_handler(cancel_event: threading.Event) -> signal.Handlers:

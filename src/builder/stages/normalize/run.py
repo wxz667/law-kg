@@ -7,33 +7,27 @@ from ...contracts import NormalizeIndexEntry, NormalizeStageIndex
 from ...io import BuildLayout, read_normalize_index, write_normalize_index
 from .metadata import build_document_index, load_metadata_items
 from .normalizer import process_metadata_item
+from .types import NormalizeRunRecord
 
 
 def merge_normalize_index(
     existing_index: NormalizeStageIndex | None,
-    updated_entries: list[NormalizeIndexEntry],
+    updated_records: list[NormalizeRunRecord],
 ) -> NormalizeStageIndex:
     merged_by_source_id = {
         entry.source_id: entry
         for entry in (existing_index.entries if existing_index is not None else [])
         if entry.source_id
     }
-    for entry in updated_entries:
-        merged_by_source_id[entry.source_id] = entry
-    merged_entries = [merged_by_source_id[key] for key in sorted(merged_by_source_id)]
-    success_count = sum(1 for entry in merged_entries if entry.status == "completed")
-    failed_count = len(merged_entries) - success_count
-    reused_count = sum(1 for entry in merged_entries if entry.details.get("reused") is True)
-    return NormalizeStageIndex(
-        stage="normalize",
-        entries=merged_entries,
-        stats={
-            "source_count": len(merged_entries),
-            "succeeded_sources": success_count,
-            "failed_sources": failed_count,
-            "reused_sources": reused_count,
-        },
-    )
+    for record in updated_records:
+        if not record.source_id:
+            continue
+        if record.status == "completed" and record.document:
+            merged_by_source_id[record.source_id] = normalize_index_entry_from_record(record)
+        else:
+            merged_by_source_id.pop(record.source_id, None)
+    entries = [merged_by_source_id[key] for key in sorted(merged_by_source_id)]
+    return NormalizeStageIndex(entries=entries)
 
 
 def read_existing_normalize_index(path) -> NormalizeStageIndex | None:
@@ -44,16 +38,20 @@ def read_existing_normalize_index(path) -> NormalizeStageIndex | None:
 
 def run(
     data_root: Path,
+    metadata_root: Path,
+    document_root: Path,
     source_ids: list[str] | None = None,
     *,
     force_rebuild: bool = False,
     progress_callback: Callable[[int, int], None] | None = None,
     checkpoint_every: int = 0,
-    checkpoint_callback: Callable[[NormalizeStageIndex, list[NormalizeIndexEntry]], None] | None = None,
-) -> NormalizeStageIndex:
+    checkpoint_callback: Callable[[NormalizeStageIndex, list[NormalizeRunRecord]], None] | None = None,
+) -> tuple[NormalizeStageIndex, list[NormalizeRunRecord]]:
     data_root = data_root.resolve()
+    metadata_root = metadata_root.resolve()
+    document_root = document_root.resolve()
     layout = BuildLayout(data_root)
-    metadata_items = load_metadata_items(data_root / "source" / "metadata")
+    metadata_items = load_metadata_items(metadata_root)
     if source_ids is not None:
         selected = {source_id for source_id in source_ids}
         metadata_items = [item for item in metadata_items if str(item.get("source_id", "")) in selected]
@@ -61,16 +59,15 @@ def run(
     else:
         missing_source_ids = []
 
-    document_index = build_document_index(data_root / "source" / "docs")
-    entries: list[NormalizeIndexEntry] = []
+    document_index = build_document_index(document_root)
+    records: list[NormalizeRunRecord] = []
     existing_by_source_id: dict[str, NormalizeIndexEntry] = {}
-    reused_count = 0
 
-    if not force_rebuild and layout.normalize_index_path().exists():
-        existing_index = strip_reused_markers(read_normalize_index(layout.normalize_index_path()))
+    existing_index = read_existing_normalize_index(layout.normalize_index_path())
+    if not force_rebuild:
         existing_by_source_id = {
             entry.source_id: entry
-            for entry in existing_index.entries
+            for entry in (existing_index.entries if existing_index is not None else [])
             if entry.source_id
         }
 
@@ -78,11 +75,10 @@ def run(
     if progress_callback is not None:
         progress_callback(0, max(total_sources, 1))
     completed_progress = 0
-    existing_index = strip_reused_markers(read_existing_normalize_index(layout.normalize_index_path()))
 
     for source_id in missing_source_ids:
-        entries.append(
-            NormalizeIndexEntry(
+        records.append(
+            NormalizeRunRecord(
                 source_id=source_id,
                 status="failed",
                 error_type="missing_metadata",
@@ -97,8 +93,7 @@ def run(
             checkpoint_callback=checkpoint_callback,
             completed_progress=completed_progress,
             total_sources=total_sources,
-            entries=entries,
-            reused_count=reused_count,
+            records=records,
             source_ids=source_ids,
             existing_index=existing_index,
         )
@@ -106,14 +101,18 @@ def run(
     for metadata in metadata_items:
         source_id = str(metadata.get("source_id", "")).strip()
         existing_entry = existing_by_source_id.get(source_id)
-        if existing_entry is not None and can_reuse_entry(existing_entry):
-            reused_entry = NormalizeIndexEntry.from_dict(existing_entry.to_dict())
-            reused_entry.details = dict(reused_entry.details)
-            reused_entry.details["reused"] = True
-            entries.append(reused_entry)
-            reused_count += 1
+        if existing_entry is not None and can_reuse_entry(existing_entry, layout):
+            records.append(
+                NormalizeRunRecord(
+                    source_id=existing_entry.source_id,
+                    status="completed",
+                    title=existing_entry.title,
+                    document=existing_entry.document,
+                    reused=True,
+                )
+            )
         else:
-            entries.append(process_metadata_item(metadata, document_index, layout))
+            records.append(process_metadata_item(metadata, document_index, layout))
         completed_progress += 1
         if progress_callback is not None:
             progress_callback(completed_progress, max(total_sources, 1))
@@ -122,73 +121,46 @@ def run(
             checkpoint_callback=checkpoint_callback,
             completed_progress=completed_progress,
             total_sources=total_sources,
-            entries=entries,
-            reused_count=reused_count,
+            records=records,
             source_ids=source_ids,
             existing_index=existing_index,
         )
 
-    index = build_normalize_stage_index(entries, reused_count=reused_count)
+    index = build_normalize_stage_index(records)
     if source_ids is not None and existing_index is not None:
-        index = merge_normalize_index(existing_index, entries)
+        index = merge_normalize_index(existing_index, records)
     write_normalize_index(layout.normalize_index_path(), index)
-    return index
+    return index, records
 
 
-def can_reuse_entry(entry: NormalizeIndexEntry) -> bool:
-    return entry.status == "completed" and bool(entry.artifact_path) and Path(entry.artifact_path).exists()
+def can_reuse_entry(entry: NormalizeIndexEntry, layout: BuildLayout) -> bool:
+    return bool(entry.document) and (layout.normalize_documents_dir() / entry.document).exists()
 
 
-def strip_reused_markers(index: NormalizeStageIndex | None) -> NormalizeStageIndex | None:
-    if index is None:
-        return None
-    cleaned_entries: list[NormalizeIndexEntry] = []
-    for entry in index.entries:
-        cleaned_entry = NormalizeIndexEntry.from_dict(entry.to_dict())
-        cleaned_entry.details = dict(cleaned_entry.details)
-        cleaned_entry.details.pop("reused", None)
-        cleaned_entries.append(cleaned_entry)
-    success_count = sum(1 for entry in cleaned_entries if entry.status == "completed")
-    failed_count = len(cleaned_entries) - success_count
-    return NormalizeStageIndex(
-        stage=index.stage,
-        entries=cleaned_entries,
-        stats={
-            "source_count": len(cleaned_entries),
-            "succeeded_sources": success_count,
-            "failed_sources": failed_count,
-            "reused_sources": 0,
-        },
-    )
+def build_normalize_stage_index(records: list[NormalizeRunRecord]) -> NormalizeStageIndex:
+    entries = [
+        normalize_index_entry_from_record(record)
+        for record in records
+        if record.status == "completed" and record.document
+    ]
+    return NormalizeStageIndex(entries=sorted(entries, key=lambda entry: entry.source_id))
 
 
-def build_normalize_stage_index(entries: list[NormalizeIndexEntry], *, reused_count: int) -> NormalizeStageIndex:
-    success_count = sum(1 for entry in entries if entry.status == "completed")
-    failed_count = len(entries) - success_count
-    return NormalizeStageIndex(
-        stage="normalize",
-        entries=list(entries),
-        stats={
-            "source_count": len(entries),
-            "succeeded_sources": success_count,
-            "failed_sources": failed_count,
-            "reused_sources": reused_count,
-            "work_units_total": len(entries),
-            "work_units_completed": success_count,
-            "work_units_failed": failed_count,
-            "work_units_skipped": reused_count,
-        },
+def normalize_index_entry_from_record(record: NormalizeRunRecord) -> NormalizeIndexEntry:
+    return NormalizeIndexEntry(
+        source_id=record.source_id,
+        title=record.title,
+        document=record.document,
     )
 
 
 def maybe_emit_checkpoint(
     *,
     checkpoint_every: int,
-    checkpoint_callback: Callable[[NormalizeStageIndex, list[NormalizeIndexEntry]], None] | None,
+    checkpoint_callback: Callable[[NormalizeStageIndex, list[NormalizeRunRecord]], None] | None,
     completed_progress: int,
     total_sources: int,
-    entries: list[NormalizeIndexEntry],
-    reused_count: int,
+    records: list[NormalizeRunRecord],
     source_ids: list[str] | None,
     existing_index: NormalizeStageIndex | None,
 ) -> None:
@@ -196,7 +168,7 @@ def maybe_emit_checkpoint(
         return
     if completed_progress % checkpoint_every != 0 and completed_progress != total_sources:
         return
-    snapshot_index = build_normalize_stage_index(entries, reused_count=reused_count)
+    snapshot_index = build_normalize_stage_index(records)
     if source_ids is not None and existing_index is not None:
-        snapshot_index = merge_normalize_index(existing_index, entries)
-    checkpoint_callback(snapshot_index, list(entries))
+        snapshot_index = merge_normalize_index(existing_index, records)
+    checkpoint_callback(snapshot_index, list(records))

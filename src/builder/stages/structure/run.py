@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Callable
 
 from ...contracts import GraphBundle
+from ...io import BuildLayout
 from .graph_builder import run_structure
 from .loader import load_document_units
 
@@ -17,7 +18,8 @@ def run(
     checkpoint_callback: Callable[[GraphBundle, list[str], int, int], None] | None = None,
 ) -> GraphBundle:
     data_root = data_root.resolve()
-    units = load_document_units((data_root / "intermediate" / "builder" / "01_normalize" / "normalize_index.json"), source_ids=source_ids)
+    layout = BuildLayout(data_root)
+    units = load_document_units(layout.normalize_index_path(), source_ids=source_ids)
     return run_structure(
         units,
         progress_callback=progress_callback,

@@ -15,8 +15,10 @@ STAGE_OUTPUT_DIRS = {
 
 
 class BuildLayout:
-    def __init__(self, data_root: Path) -> None:
+    def __init__(self, data_root: Path, *, metadata_root: Path | None = None, document_root: Path | None = None) -> None:
         self.data_root = data_root
+        self.metadata_root = metadata_root
+        self.document_root = document_root
         self.intermediate_root = data_root / "intermediate" / "builder"
         self.exports_root = data_root / "exports" / "json"
         self.logs_root = data_root.parent / "logs" / "builder"
@@ -97,7 +99,7 @@ class BuildLayout:
         return self.normalize_documents_dir() / f"{source_id}.json"
 
     def normalize_index_path(self) -> Path:
-        return self.stage_dir("normalize") / "normalize_index.json"
+        return self.stage_dir("normalize") / "index.json"
 
     def job_log_path(self, job_id: str) -> Path:
         return self.logs_root / f"{job_id}.json"

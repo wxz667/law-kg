@@ -28,11 +28,12 @@ def resolve_builder_substage_config(runtime: Any, stage_name: str, substage_name
 
 
 class PipelineRuntime:
-    def __init__(self, data_root: Path) -> None:
-        self.data_root = data_root
+    def __init__(self, builder_config: Any) -> None:
+        self.builder_config = builder_config
+        self.data_root = builder_config.data
         root = project_root()
         self.models_root = root / "models"
-        self.config_path = root / "configs" / "config.json"
+        self.config_path = builder_config.config_path
         self._config_cache: dict[str, Any] | None = None
         self._provider_clients: dict[str, Any] = {}
 

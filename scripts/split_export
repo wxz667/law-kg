@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}." uv run python -m builder.cli split-export "$@"

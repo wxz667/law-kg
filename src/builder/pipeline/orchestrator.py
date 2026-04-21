@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import threading
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from ..contracts import (
     EquivalenceRecord,
@@ -20,7 +21,7 @@ from ..io import (
     write_stage_edges,
     write_stage_nodes,
 )
-from ..utils.ids import timestamp_utc
+from ..utils.ids import project_root, timestamp_utc
 from ..utils.locator import source_id_from_node_id
 from .handlers.common import (
     StageContext,
@@ -59,6 +60,47 @@ GRAPH_INPUT_STAGE = {
     "infer": "align",
 }
 
+DEFAULT_CONFIG_PATH = project_root() / "configs" / "config.json"
+
+
+@dataclass(frozen=True)
+class BuilderConfig:
+    data: Path
+    metadata: Path
+    document: Path
+    config_path: Path = DEFAULT_CONFIG_PATH
+
+
+def load_builder_config(
+    config_path: Path | None = None,
+    *,
+    data_override: Path | None = None,
+) -> BuilderConfig:
+    path = (config_path or DEFAULT_CONFIG_PATH).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Missing config file: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    builder = payload.get("builder")
+    if not isinstance(builder, dict):
+        raise ValueError(f"{path.name} is missing top-level 'builder' configuration.")
+    missing = [key for key in ("data", "metadata", "document") if not str(builder.get(key, "")).strip()]
+    if missing:
+        joined = ", ".join(f"builder.{key}" for key in missing)
+        raise ValueError(f"{path.name} is missing required builder path configuration: {joined}.")
+    return BuilderConfig(
+        data=resolve_builder_config_path(data_override if data_override is not None else builder["data"]),
+        metadata=resolve_builder_config_path(builder["metadata"]),
+        document=resolve_builder_config_path(builder["document"]),
+        config_path=path,
+    )
+
+
+def resolve_builder_config_path(value: Any) -> Path:
+    path = Path(str(value).strip())
+    if not str(path):
+        raise ValueError("Builder path configuration cannot be empty.")
+    return path if path.is_absolute() else (project_root() / path).resolve()
+
 
 def build_job_id(prefix: str = "build") -> str:
     return f"{prefix}-{timestamp_utc().replace(':', '').replace('-', '')}"
@@ -67,7 +109,8 @@ def build_job_id(prefix: str = "build") -> str:
 def build_knowledge_graph(
     *,
     source_id: str | list[str] | None = None,
-    data_root: Path,
+    data_root: Path | None = None,
+    builder_config: BuilderConfig | None = None,
     category: str | list[str] | None = None,
     all_sources: bool = False,
     start_stage: str | None = None,
@@ -86,7 +129,8 @@ def build_knowledge_graph(
 ) -> dict[str, object]:
     del report_progress
     del incremental
-    data_root = data_root.resolve()
+    builder_config = builder_config or load_builder_config(data_override=data_root)
+    data_root = builder_config.data
     if source_id is not None:
         source_ids = [source_id] if isinstance(source_id, str) else list(source_id)
         source_path_label = (
@@ -95,7 +139,7 @@ def build_knowledge_graph(
             else f"selected:{','.join(str(value).strip() for value in source_ids if str(value).strip())}"
         )
     elif category is not None or all_sources:
-        source_ids = discover_source_ids(data_root, category=category)
+        source_ids = discover_source_ids(builder_config.metadata, category=category)
         source_path_label = (
             f"category:{','.join(category) if isinstance(category, list) else category}"
             if category is not None
@@ -111,7 +155,7 @@ def build_knowledge_graph(
     job_id = build_job_id("build")
     return _build_from_source_ids(
         source_ids=selected_source_ids,
-        data_root=data_root,
+        builder_config=builder_config,
         start_stage=start_stage,
         through_stage=through_stage,
         force_rebuild=force_rebuild,
@@ -130,7 +174,7 @@ def build_knowledge_graph(
 def _build_from_source_ids(
     *,
     source_ids: list[str],
-    data_root: Path,
+    builder_config: BuilderConfig,
     start_stage: str | None,
     through_stage: str,
     force_rebuild: bool,
@@ -144,9 +188,9 @@ def _build_from_source_ids(
     stage_error_callback: Callable[[str, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, object]:
-    data_root = data_root.resolve()
+    data_root = builder_config.data
     ensure_stage_dirs(data_root)
-    layout = BuildLayout(data_root)
+    layout = BuildLayout(data_root, metadata_root=builder_config.metadata, document_root=builder_config.document)
     previous_final_graph = (
         load_graph_snapshot(
             layout,
@@ -178,7 +222,7 @@ def _build_from_source_ids(
         source_count=len(selected_source_ids),
     )
     write_job_log(layout.job_log_path(job_id), log_record)
-    runtime = PipelineRuntime(data_root)
+    runtime = PipelineRuntime(builder_config)
 
     completed = 0
     total = len(stage_names)
@@ -511,8 +555,8 @@ def resolve_terminal_stage_status(stats: dict[str, object]) -> str:
     return "completed"
 
 
-def discover_source_ids(data_root: Path, category: str | list[str] | None = None) -> list[str]:
-    metadata_root = data_root / "source" / "metadata"
+def discover_source_ids(metadata_root: Path, category: str | list[str] | None = None) -> list[str]:
+    metadata_root = metadata_root.resolve()
     source_ids: list[str] = []
     categories = (
         {str(value).strip() for value in category if str(value).strip()}
@@ -534,12 +578,11 @@ def discover_source_ids(data_root: Path, category: str | list[str] | None = None
     return source_ids
 
 
-def resolve_source_id(source_arg: str, data_root: Path) -> str:
+def resolve_source_id(source_arg: str, metadata_root: Path) -> str:
     source_arg = source_arg.strip()
     if not source_arg:
         raise ValueError("source_id cannot be empty.")
-    data_root = data_root.resolve()
-    catalog = discover_source_ids(data_root)
+    catalog = discover_source_ids(metadata_root)
     if source_arg in catalog:
         return source_arg
     raise ValueError(f"Unknown source_id: {source_arg}")

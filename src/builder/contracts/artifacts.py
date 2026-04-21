@@ -117,60 +117,36 @@ class DocumentUnitRecord:
 @dataclass
 class NormalizeIndexEntry:
     source_id: str
-    status: str
-    title: str = ""
-    document_path: str = ""
-    artifact_path: str = ""
-    message: str = ""
-    error_type: str = ""
-    details: dict[str, Any] = field(default_factory=dict)
+    title: str
+    document: str
 
     def to_dict(self) -> dict[str, Any]:
-        payload = {
+        return {
             "source_id": self.source_id,
-            "status": self.status,
             "title": self.title,
-            "document_path": self.document_path,
-            "artifact_path": self.artifact_path,
-            "message": self.message,
-            "error_type": self.error_type,
-            "details": self.details,
+            "document": self.document,
         }
-        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "NormalizeIndexEntry":
         return cls(
             source_id=str(payload["source_id"]),
-            status=str(payload["status"]),
             title=str(payload.get("title", "")),
-            document_path=str(payload.get("document_path", "")),
-            artifact_path=str(payload.get("artifact_path", "")),
-            message=str(payload.get("message", "")),
-            error_type=str(payload.get("error_type", "")),
-            details=dict(payload.get("details", {})),
+            document=str(payload.get("document", "")),
         )
 
 
 @dataclass
 class NormalizeStageIndex:
-    stage: str
     entries: list[NormalizeIndexEntry] = field(default_factory=list)
-    stats: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "stage": self.stage,
-            "entries": [entry.to_dict() for entry in self.entries],
-            "stats": dict(self.stats),
-        }
+    def to_list(self) -> list[dict[str, Any]]:
+        return [entry.to_dict() for entry in self.entries]
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "NormalizeStageIndex":
+    def from_list(cls, payload: list[dict[str, Any]]) -> "NormalizeStageIndex":
         return cls(
-            stage=str(payload["stage"]),
-            entries=[NormalizeIndexEntry.from_dict(item) for item in payload.get("entries", [])],
-            stats=dict(payload.get("stats", {})),
+            entries=[NormalizeIndexEntry.from_dict(item) for item in payload],
         )
 
 

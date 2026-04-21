@@ -1,7 +1,10 @@
 {
   "builder": {
+    "data": "data",
+    "metadata": "data/source/metadata",
+    "document": "data/source/documents",
     "normalize": {
-      "checkpoint_every": 200
+      "checkpoint_every": 500
     },
     "structure": {
       "checkpoint_every": 1000
