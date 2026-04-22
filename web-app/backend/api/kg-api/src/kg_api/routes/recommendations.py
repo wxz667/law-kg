@@ -140,6 +140,123 @@ def search_provisions(
         )
 
 
+@router.get("/advanced-search")
+def advanced_search_provisions(
+    q: Optional[str] = Query(None, description="Search query keyword (optional, returns all if empty)"),
+    scope: str = Query("provisions", description="Search scope: provisions (default)"),
+    field: str = Query("name", description="Field to search: name, text, or full_name"),
+    department: Optional[str] = Query(None, description="Legal department/category filter"),
+    effect_level: Optional[str] = Query(None, description="Effect level filter"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    driver=Depends(get_neo4j_driver),
+):
+    try:
+        scope_norm = (scope or "provisions").strip().lower()
+        if scope_norm not in {"provisions", "all"}:
+            scope_norm = "provisions"
+
+        keyword = (q or "").strip()
+
+        with driver.session() as session:
+            # Build keyword filter condition
+            keyword_filter = ""
+            if keyword:
+                keyword_filter = """
+                  AND (
+                    toLower(n.name) CONTAINS toLower($keyword)
+                    OR toLower(n.text) CONTAINS toLower($keyword)
+                    OR toLower(coalesce(n.full_name, '')) CONTAINS toLower($keyword)
+                  )
+                """
+
+            query = f"""
+            MATCH (n:Node)
+            WHERE n.type = 'ProvisionNode'
+            {keyword_filter}
+            OPTIONAL MATCH (law:Node {{type: 'DocumentNode'}})-[:CONTAINS*]->(n)
+            WITH n, law
+            WHERE ($department IS NULL OR law IS NOT NULL AND law.category IS NOT NULL AND toLower(law.category) CONTAINS toLower($department))
+              AND ($effect_level IS NULL OR law IS NOT NULL AND law.status IS NOT NULL AND toLower(law.status) CONTAINS toLower($effect_level))
+            RETURN n, law.name AS law_name
+            ORDER BY
+                CASE n.level
+                    WHEN 'article' THEN 1
+                    WHEN 'paragraph' THEN 2
+                    WHEN 'item' THEN 3
+                    WHEN 'sub_item' THEN 4
+                    ELSE 5
+                END,
+                size(coalesce(n.text, n.name, '')) ASC
+            SKIP $offset
+            LIMIT $limit
+            """
+
+            result = session.run(
+                query,
+                keyword=keyword,
+                department=department,
+                effect_level=effect_level,
+                offset=offset,
+                limit=limit,
+            )
+            provisions = []
+
+            for record in result:
+                node = record["n"]
+                law_name = record.get("law_name", "")
+                display_name = f"{law_name} {node.get('name', '')}" if law_name else node.get("name", "")
+
+                provisions.append(
+                    {
+                        "id": str(node.element_id),
+                        "type": node.get("type", "ProvisionNode"),
+                        "name": node.get("name", ""),
+                        "full_name": display_name,
+                        "law_name": law_name,
+                        "text": node.get("text", ""),
+                        "level": node.get("level", ""),
+                        "properties": dict(node),
+                    }
+                )
+
+            # Build count query with same keyword filter
+            count_keyword_filter = ""
+            if keyword:
+                count_keyword_filter = """
+                  AND (
+                    toLower(n.name) CONTAINS toLower($keyword)
+                    OR toLower(n.text) CONTAINS toLower($keyword)
+                    OR toLower(coalesce(n.full_name, '')) CONTAINS toLower($keyword)
+                  )
+                """
+
+            count_query = f"""
+            MATCH (n:Node)
+            WHERE n.type = 'ProvisionNode'
+            {count_keyword_filter}
+            OPTIONAL MATCH (law:Node {{type: 'DocumentNode'}})-[:CONTAINS*]->(n)
+            WITH n, law
+            WHERE ($department IS NULL OR law IS NOT NULL AND law.category IS NOT NULL AND toLower(law.category) CONTAINS toLower($department))
+              AND ($effect_level IS NULL OR law IS NOT NULL AND law.status IS NOT NULL AND toLower(law.status) CONTAINS toLower($effect_level))
+            RETURN count(n) as total
+            """
+            count_result = session.run(
+                count_query,
+                keyword=keyword,
+                department=department,
+                effect_level=effect_level,
+            )
+            total = count_result.single()["total"]
+
+            return {"results": provisions, "total": total, "limit": limit, "offset": offset, "scope": scope_norm}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Advanced search failed: {str(e)}",
+        )
+
+
 @router.get("/node/{node_id}")
 def get_provision_node(
     node_id: str,

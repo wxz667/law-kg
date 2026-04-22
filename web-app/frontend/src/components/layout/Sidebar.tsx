@@ -1,12 +1,12 @@
 import { NavLink } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Book, FileText, User, Home } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Book, FileText, User, Home, Search } from 'lucide-react';
 import { useLayoutStore } from '@/stores/layoutStore';
 
 const menuItems = [
     { path: '/', icon: Home, label: '首页' },
     { path: '/provisions', icon: Book, label: '法条数据库' },
     { path: '/documents', icon: FileText, label: '文书管理' },
-    // { path: '/search', icon: Search, label: '高级搜索' }, // 暂时隐藏
+    { path: '/search', icon: Search, label: '高级搜索' },
     { path: '/profile', icon: User, label: '个人中心' },
 ];
 

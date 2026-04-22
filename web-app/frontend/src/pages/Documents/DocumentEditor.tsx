@@ -5,7 +5,7 @@ import { Modal } from '@/components/ui';
 import type { DocumentUpdateIn } from '../types';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { apiClient, documentApi, userDocumentApi, recommendationApi, provisionApi } from '@/lib/api-client';
+import { apiClient, userDocumentApi, recommendationApi } from '@/lib/api-client';
 
 export function DocumentEditor() {
     const { id } = useParams<{ id: string }>();
@@ -177,20 +177,12 @@ export function DocumentEditor() {
         try {
             let fullName: string;
             let provisionText: string;
-            let lawName = '';
-            let article = '';
-            let paragraph = '';
-            let item = '';
 
             // 如果传入了法条数据，直接使用
             if (provisionData) {
                 const props = (provisionData.properties || {}) as Record<string, unknown>;
                 fullName = String(provisionData.full_name || props.full_name || provisionData.name || props.name || provisionData.provision_id || provisionData.id || '');
                 provisionText = String(provisionData.text || props.text || '').trim();
-                lawName = String(props.law_name || '');
-                article = String(props.article || '');
-                paragraph = String(props.paragraph || '');
-                item = String(props.item || '');
             } else {
                 // 如果没传入数据，从推荐列表中查找
                 const rec = recommendations.find(r => (r.provision_id || r.id) === provisionId);
@@ -198,10 +190,6 @@ export function DocumentEditor() {
                     const props = (rec.properties || {}) as Record<string, unknown>;
                     fullName = String(rec.full_name || props.full_name || rec.name || props.name || provisionId);
                     provisionText = String(rec.text || props.text || '').trim();
-                    lawName = String(props.law_name || '');
-                    article = String(props.article || '');
-                    paragraph = String(props.paragraph || '');
-                    item = String(props.item || '');
                 } else {
                     // 也尝试从搜索结果中查找
                     const searchResult = searchResults.find(r => r.id === provisionId);
@@ -209,10 +197,6 @@ export function DocumentEditor() {
                         const props = (searchResult.properties || {}) as Record<string, unknown>;
                         fullName = String(searchResult.full_name || props.full_name || searchResult.name || props.name || provisionId);
                         provisionText = String(searchResult.text || props.text || '').trim();
-                        lawName = String(props.law_name || '');
-                        article = String(props.article || '');
-                        paragraph = String(props.paragraph || '');
-                        item = String(props.item || '');
                     } else {
                         setSaveMessage({ type: 'error', text: '未找到法条数据' });
                         setTimeout(() => setSaveMessage(null), 2000);
