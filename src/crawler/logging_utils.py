@@ -15,6 +15,8 @@ class RunLogger:
         self.command = command
         self.arguments = arguments
         self.started_at = utc_now_iso()
+        stamp = self.started_at.replace(":", "").replace("-", "")
+        self.summary_path = self.logs_dir / f"run-{stamp}.json"
         self.failures: list[FailureRecord] = []
 
     def log_failure(self, source_id: str | None, category: str | None, stage: str, error: str) -> None:
@@ -28,21 +30,23 @@ class RunLogger:
             )
         )
 
-    def flush(self, stats: CrawlStats) -> dict[str, Path]:
-        finished_at = utc_now_iso()
-        stamp = self.started_at.replace(":", "").replace("-", "")
-        summary_path = self.logs_dir / f"run-{stamp}.json"
-
+    def checkpoint(self, stats: CrawlStats, *, finished: bool = False) -> Path:
         summary_payload = {
             "command": self.command,
             "arguments": self.arguments,
             "started_at": self.started_at,
-            "finished_at": finished_at,
+            "updated_at": utc_now_iso(),
             "stats": stats.to_dict(),
             "failure_count": len(self.failures),
             "failures": [asdict(record) for record in self.failures],
         }
-        write_json(summary_path, summary_payload)
+        if finished:
+            summary_payload["finished_at"] = utc_now_iso()
+        write_json(self.summary_path, summary_payload)
+        return self.summary_path
+
+    def flush(self, stats: CrawlStats) -> dict[str, Path]:
+        summary_path = self.checkpoint(stats, finished=True)
         return {
             "summary": summary_path,
         }

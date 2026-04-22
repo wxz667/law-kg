@@ -11,7 +11,7 @@ from typing import Any
 from .client import FlkClient
 from .flk_api import FlkApi
 from .logging_utils import RunLogger
-from .models import CrawlerConfig
+from .models import CrawlerConfig, STATUS_VALUES
 from .pipeline import CrawlerPipeline, normalize_categories
 from .storage import CrawlerStorage
 
@@ -173,7 +173,10 @@ class ProgressReporter:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Crawl FLK metadata and docx documents.")
-    parser.add_argument("--category", default="all", help="One category name or 'all'.")
+    parser.add_argument("--category", nargs="+", default=["all"], help="One or more category names, or 'all'.")
+    parser.add_argument("--category-except", nargs="+", default=[], help="Exclude category names from the selected categories.")
+    parser.add_argument("--status", nargs="+", choices=STATUS_VALUES, default=[], help="Document stage status filter.")
+    parser.add_argument("--status-except", nargs="+", choices=STATUS_VALUES, default=[], help="Document stage status exclusion filter.")
     add_common_arguments(parser)
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing metadata and documents for selected stages.")
     parser.add_argument("--metadata", action="store_true", help="Run metadata stage.")
@@ -262,6 +265,8 @@ def apply_cli_overrides(config: CrawlerConfig, args: argparse.Namespace) -> Craw
         page_size=max(args.page_size if args.page_size is not None else config.page_size, 1),
         checkpoint_every=max(args.batch if args.batch is not None else config.checkpoint_every, 1),
         limit=args.limit,
+        status=tuple(args.status or ()),
+        status_except=tuple(args.status_except or ()),
     )
 
 
@@ -270,6 +275,22 @@ def resolve_config_path(value: Any) -> Path:
     if not str(path):
         raise ValueError("Crawler path configuration cannot be empty.")
     return path if path.is_absolute() else (DEFAULT_CONFIG_PATH.parents[1] / path).resolve()
+
+
+def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    run_metadata = args.metadata or not args.document
+    run_docs = args.document or not args.metadata
+    if run_metadata and not run_docs and (args.status or args.status_except):
+        parser.error("--status and --status-except can only be used with --document.")
+
+    overlap = sorted(set(args.status or []) & set(args.status_except or []))
+    if overlap:
+        parser.error(f"--status and --status-except overlap: {', '.join(overlap)}")
+
+    try:
+        normalize_categories(args.category, exclude=args.category_except)
+    except ValueError as exc:
+        parser.error(str(exc))
 
 
 async def run_command(args: argparse.Namespace) -> int:
@@ -312,7 +333,7 @@ async def run_command(args: argparse.Namespace) -> int:
                 stage_summary_callback=reporter.summarize_stage,
             )
 
-            categories = normalize_categories(args.category)
+            categories = normalize_categories(args.category, exclude=args.category_except)
             if run_metadata and run_docs:
                 result = await pipeline.crawl_categories(categories)
             elif run_metadata:
@@ -329,6 +350,7 @@ async def run_command(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    validate_args(parser, args)
     try:
         return asyncio.run(run_command(args))
     except KeyboardInterrupt:

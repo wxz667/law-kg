@@ -28,6 +28,7 @@ EXPORT_STAGE_GRAPH_VIEW = {
     "infer": "infer",
 }
 DEFAULT_EXPORT_STAGE_ORDER = ("infer", "align", "classify", "structure")
+STATUS_VALUES = ("现行有效", "已修改", "已废止", "尚未生效")
 
 
 def add_stage_arguments(parser: argparse.ArgumentParser) -> None:
@@ -72,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--data-root",
         help="Override builder.data from configs/config.json.",
     )
-    scope_group = parser.add_mutually_exclusive_group(required=True)
+    scope_group = parser.add_mutually_exclusive_group()
     scope_group.add_argument(
         "--source-id",
         dest="source_ids",
@@ -80,14 +81,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="One or more metadata source_id values to build.",
     )
     scope_group.add_argument(
+        "--all",
+        action="store_true",
+        help="Build all discovered metadata sources.",
+    )
+    parser.add_argument(
         "--category",
         nargs="+",
         help="Build all metadata sources whose category matches any of these values.",
     )
-    scope_group.add_argument(
-        "--all",
-        action="store_true",
-        help="Build all discovered metadata sources.",
+    parser.add_argument(
+        "--category-except",
+        nargs="+",
+        default=[],
+        help="Build metadata sources excluding these category values.",
+    )
+    parser.add_argument(
+        "--status",
+        nargs="+",
+        choices=STATUS_VALUES,
+        default=[],
+        help="Build metadata sources whose status matches any of these values.",
+    )
+    parser.add_argument(
+        "--status-except",
+        nargs="+",
+        choices=STATUS_VALUES,
+        default=[],
+        help="Build metadata sources excluding these status values.",
     )
     add_stage_arguments(parser)
     return parser
@@ -136,11 +157,13 @@ def main() -> int:
 
     parser = build_parser()
     args = parser.parse_args(raw_args)
-    builder_config = load_builder_config(data_override=Path(args.data_root) if args.data_root else None)
 
     if args.command != "build":
         parser.error(f"Unsupported command: {args.command}")
         return 1
+
+    validate_build_scope(parser, args)
+    builder_config = load_builder_config(data_override=Path(args.data_root) if args.data_root else None)
 
     if args.rebuild and not confirm_rebuild(args):
         print("cancelled", file=sys.stderr)
@@ -190,9 +213,15 @@ def run_build_command(
         )
 
     category = list(args.category) if args.category else None
+    category_except = list(args.category_except) if args.category_except else None
+    status = list(args.status) if args.status else None
+    status_except = list(args.status_except) if args.status_except else None
     return build_knowledge_graph(
         builder_config=builder_config,
         category=category,
+        category_except=category_except,
+        status=status,
+        status_except=status_except,
         all_sources=bool(args.all),
         start_stage=args.start_stage,
         through_stage=args.through_stage,
@@ -248,6 +277,31 @@ def resolve_export_stage(layout: BuildLayout, requested_stage: str | None) -> st
     )
 
 
+def validate_build_scope(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    filter_args = {
+        "--category": bool(args.category),
+        "--category-except": bool(args.category_except),
+        "--status": bool(args.status),
+        "--status-except": bool(args.status_except),
+    }
+    has_filter_scope = any(filter_args.values())
+    selected_modes = int(bool(args.source_ids)) + int(bool(args.all)) + int(has_filter_scope)
+    if selected_modes == 0:
+        parser.error(
+            "one of --source-id, --all, --category, --category-except, --status, or --status-except is required"
+        )
+    if selected_modes > 1:
+        parser.error("--source-id, --all, and metadata filter scope arguments are mutually exclusive")
+
+    overlap = sorted(set(args.status or []) & set(args.status_except or []))
+    if overlap:
+        parser.error(f"--status and --status-except overlap: {', '.join(overlap)}")
+
+    category_overlap = sorted(set(args.category or []) & set(args.category_except or []))
+    if category_overlap:
+        parser.error(f"--category and --category-except overlap: {', '.join(category_overlap)}")
+
+
 def confirm_rebuild(args: argparse.Namespace) -> bool:
     target = describe_build_scope(args)
     start_stage = args.start_stage or STAGE_SEQUENCE[0]
@@ -268,8 +322,17 @@ def confirm_rebuild(args: argparse.Namespace) -> bool:
 def describe_build_scope(args: argparse.Namespace) -> str:
     if args.source_ids:
         return f"source-id(s): {', '.join(str(value) for value in args.source_ids)}"
+    filters: list[str] = []
     if args.category:
-        return f"category: {', '.join(str(value) for value in args.category)}"
+        filters.append(f"category: {', '.join(str(value) for value in args.category)}")
+    if args.category_except:
+        filters.append(f"category-except: {', '.join(str(value) for value in args.category_except)}")
+    if args.status:
+        filters.append(f"status: {', '.join(str(value) for value in args.status)}")
+    if args.status_except:
+        filters.append(f"status-except: {', '.join(str(value) for value in args.status_except)}")
+    if filters:
+        return "; ".join(filters)
     return "all sources"
 
 

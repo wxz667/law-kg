@@ -97,6 +97,14 @@ crawler 配置：
 - CLI 中同名路径与运行参数优先级高于 `configs/config.json`
 - CLI 传入 `--data-root` 时，若未显式传 `--metadata-dir` 或 `--document-dir`，source 输出目录随 data root 切换
 
+crawler manifest：
+
+- `data/manifest/crawler/documents.json` 是当前已下载 DOCX 的 `source_id` 清单，不是单次抓取状态
+- manifest 只记录 `source_ids`、`stats.document_count`、`stats.category_counts` 和 `stats.status_counts`，不记录 pending、failed、retry 等运行态字段
+- document 阶段通过 manifest 判断复用；进度 total 仍按当前分类候选 metadata 总数显示，manifest 命中项计入 skipped
+- 新文档下载成功后必须同步写入 manifest，使 DOCX 产物和 manifest 保持一致
+- crawler run log 必须按 checkpoint 写回，避免中断时丢失已累计统计和失败列表
+
 供应商适配：
 
 - `provider=deepseek` 需要 `DEEPSEEK_API_KEY` 和 `DEEPSEEK_BASE_URL`
@@ -129,6 +137,9 @@ scripts/crawler --category 法律 --data-root data
 - `--document` 仅运行 document
 - `--overwrite` 同时覆盖 metadata 和 document
 - `--limit` 限制每个分类处理数量
+- `--category`/`--category-except` 同时作用于 metadata 和 document 阶段
+- `--status`/`--status-except` 只作用于 document 阶段；metadata 阶段不按状态过滤
+- document 复用基于 `data/manifest/crawler/documents.json`，不会在启动时扫描 DOCX 目录矫正 manifest
 
 ### builder
 
@@ -137,15 +148,17 @@ scripts/crawler --category 法律 --data-root data
 ```bash
 scripts/build --data-root data --source-id <source_id>
 scripts/build --data-root data --category 法律
+scripts/build --data-root data --status 现行有效
+scripts/build --data-root data --category-except 地方法规 --status-except 已废止
 scripts/build --data-root data --all
 scripts/builder build --data-root data --all
 ```
 
-作用域参数三选一：
+作用域参数分为三种互斥模式：
 
 - `--source-id`: 一个或多个 metadata `source_id`
-- `--category`: 一个或多个 metadata `category`
 - `--all`: 全部 metadata
+- metadata 过滤模式：使用 `--category`、`--category-except`、`--status`、`--status-except` 中至少一个参数
 
 阶段参数：
 
@@ -153,6 +166,15 @@ scripts/builder build --data-root data --all
 - `--end` / `--through-stage`: 结束阶段，默认 `infer`
 - `--rebuild`: 强制重建选中作用域内的阶段，执行前要求输入 `yes`
 - `--incremental`: 显式使用默认增量合并与跳过行为；当前代码中不附加额外行为
+
+metadata 过滤语义：
+
+- `--category`: 只构建指定 `category` 的 metadata
+- `--category-except`: 排除指定 `category`；未指定 `--category` 时表示从全部 metadata 中排除这些类别
+- `--status`: 只构建指定 `status` 的 metadata，合法值为 `现行有效`、`已修改`、`已废止`、`尚未生效`
+- `--status-except`: 排除指定 `status`；未指定 `--status` 时表示从全部 metadata 中排除这些状态
+- `status: null` 或非标准状态不会被 `--status` 命中；但只要没有命中 `--status-except` 的排除值，就会被保留
+- `--category` 与 `--category-except` 不允许重叠，`--status` 与 `--status-except` 不允许重叠
 
 导出命令：
 

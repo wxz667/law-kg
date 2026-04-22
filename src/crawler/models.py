@@ -15,6 +15,8 @@ CATEGORY_ID_MAP: dict[str, int] = {
     "司法解释": 27,
 }
 
+STATUS_VALUES: tuple[str, ...] = ("现行有效", "已修改", "已废止", "尚未生效")
+
 METADATA_FIELDS: tuple[str, ...] = (
     "source_id",
     "title",
@@ -103,6 +105,8 @@ class CrawlerConfig:
     page_size: int = 20
     checkpoint_every: int = 50
     limit: int | None = None
+    status: tuple[str, ...] = ()
+    status_except: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)

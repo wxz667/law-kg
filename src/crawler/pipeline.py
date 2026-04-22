@@ -49,7 +49,11 @@ class CrawlerPipeline:
         self.progress_callback = progress_callback
         self.stage_summary_callback = stage_summary_callback
         self._metadata_lock = asyncio.Lock()
+        self._document_lock = asyncio.Lock()
         self._metadata_since_flush = 0
+        self._document_since_flush = 0
+        self._metadata_dirty = False
+        self._document_manifest_dirty = False
 
     async def crawl_categories(self, categories: Iterable[str]) -> PipelineResult:
         metadata_result = await self.crawl_metadata(categories)
@@ -69,11 +73,11 @@ class CrawlerPipeline:
         metadata_index = self.storage.load_metadata_index()
 
         for category in categories:
-            self._announce_stage(f"分类清单抓取: {category}")
             plan = await self._collect_category_items(category, metadata_index)
             stats.skipped_metadata += plan.skipped_existing + plan.skipped_duplicate
             self._announce_stage(f"元数据抓取: {category}")
             self._metadata_since_flush = 0
+            self._metadata_dirty = False
             fetched_before = stats.fetched_metadata
             failed_before = stats.failed
             await self._fetch_metadata_for_items(category, plan.items, metadata_index, stats)
@@ -85,6 +89,7 @@ class CrawlerPipeline:
                 skipped=plan.skipped_existing + plan.skipped_duplicate,
                 failed=stats.failed - failed_before,
             )
+            self.logger.checkpoint(stats)
 
         return self._finish(stats)
 
@@ -99,33 +104,41 @@ class CrawlerPipeline:
             if metadata.category in allowed
         ]
         duplicate_filenames = self._collect_duplicate_doc_filenames(metadata_index.values())
+        document_manifest = self.storage.load_document_manifest()
         grouped: dict[str, list[LawMetadata]] = {category: [] for category in allowed}
-        skipped_by_dedup = Counter(metadata.category for metadata in dropped_metadata if metadata.category in allowed)
+        skipped_by_dedup = Counter(
+            metadata.category
+            for metadata in dropped_metadata
+            if metadata.category in allowed and self._matches_document_status(metadata)
+        )
         for category in categories:
-            candidates = [metadata for metadata in all_entries if metadata.category == category]
-            missing = [
+            candidates = [
                 metadata
-                for metadata in candidates
-                if self.storage.should_fetch_doc(
-                    metadata,
-                    overwrite=self.config.overwrite_docs,
-                    duplicate_filenames=duplicate_filenames,
-                )
+                for metadata in all_entries
+                if metadata.category == category and self._matches_document_status(metadata)
             ]
             stats.skipped_docs += skipped_by_dedup.get(category, 0)
-            if not self.config.overwrite_docs:
-                stats.skipped_docs += len(candidates) - len(missing)
             if self.config.limit is not None:
-                missing = missing[: self.config.limit]
-            grouped[category] = missing
+                candidates = candidates[: self.config.limit]
+            grouped[category] = candidates
 
         for category in categories:
             metadata_items = grouped.get(category, [])
             self._announce_stage(f"文档下载: {category}")
+            self._document_since_flush = 0
+            self._document_manifest_dirty = False
             downloaded_before = stats.downloaded_docs
             skipped_before = stats.skipped_docs
             failed_before = stats.failed
-            await self._download_docs_for_metadata(category, metadata_items, stats, duplicate_filenames)
+            await self._download_docs_for_metadata(
+                category,
+                metadata_items,
+                stats,
+                duplicate_filenames,
+                document_manifest,
+                metadata_index,
+            )
+            self.storage.write_document_manifest(document_manifest, metadata_index)
             self._summarize_stage(
                 category,
                 "document",
@@ -133,6 +146,7 @@ class CrawlerPipeline:
                 skipped=stats.skipped_docs - skipped_before,
                 failed=stats.failed - failed_before,
             )
+            self.logger.checkpoint(stats)
         return self._finish(stats)
 
     async def _collect_category_items(
@@ -214,18 +228,19 @@ class CrawlerPipeline:
                         metadata = list_metadata
                         async with self._metadata_lock:
                             metadata_index[source_id] = metadata
-                            self._metadata_since_flush += 1
-                            if self._metadata_since_flush >= self.config.checkpoint_every:
-                                self.storage.write_metadata_index(metadata_index)
-                                self._metadata_since_flush = 0
-                        stats.fetched_metadata += 1
+                            stats.fetched_metadata += 1
+                            self._metadata_dirty = True
+                            self._checkpoint_metadata_progress(metadata_index, stats)
                     except Exception as exc:
                         stats.failed += 1
                         self.logger.log_failure(source_id, category, "metadata", str(exc))
+                        self.logger.checkpoint(stats)
                         self._progress(f"metadata:{category}", position, total)
                         return
                 else:
                     stats.skipped_metadata += 1
+                    async with self._metadata_lock:
+                        self._checkpoint_metadata_progress(metadata_index, stats)
 
                 resolved[position - 1] = metadata
                 self._progress(f"metadata:{category}", position, total)
@@ -235,39 +250,88 @@ class CrawlerPipeline:
         )
         return [metadata for metadata in resolved if metadata is not None]
 
+    def _checkpoint_metadata_progress(
+        self,
+        metadata_index: dict[str, LawMetadata],
+        stats: CrawlStats,
+    ) -> None:
+        self._metadata_since_flush += 1
+        if self._metadata_since_flush >= self.config.checkpoint_every:
+            if self._metadata_dirty:
+                self.storage.write_metadata_index(metadata_index)
+                self._metadata_dirty = False
+            self.logger.checkpoint(stats)
+            self._metadata_since_flush = 0
+
     async def _download_docs_for_metadata(
         self,
         category: str,
         metadata_items: list[LawMetadata],
         stats: CrawlStats,
         duplicate_filenames: set[str],
+        document_manifest: set[str],
+        metadata_index: dict[str, LawMetadata],
     ) -> None:
         semaphore = asyncio.Semaphore(self.config.concurrency)
         total = len(metadata_items)
 
         async def worker(position: int, metadata: LawMetadata) -> None:
             async with semaphore:
-                if not self.storage.should_fetch_doc(
-                    metadata,
-                    overwrite=self.config.overwrite_docs,
-                    duplicate_filenames=duplicate_filenames,
-                ):
+                if not self.config.overwrite_docs and self.storage.manifest_has_doc(metadata, document_manifest):
                     stats.skipped_docs += 1
+                    await self._checkpoint_document_progress(
+                        stats,
+                        document_manifest,
+                        metadata_index,
+                        manifest_changed=False,
+                    )
                     self._progress(f"docs:{category}", position, total)
                     return
                 try:
                     content = await self.api.download_docx(metadata.source_id, metadata.source_url)
                     self.storage.save_doc(metadata, content, duplicate_filenames)
                     stats.downloaded_docs += 1
+                    document_manifest.add(metadata.source_id)
+                    await self._checkpoint_document_progress(
+                        stats,
+                        document_manifest,
+                        metadata_index,
+                        manifest_changed=True,
+                    )
                 except Exception as exc:
                     stats.failed += 1
                     self.logger.log_failure(metadata.source_id, metadata.category, "download", str(exc))
+                    self.logger.checkpoint(stats)
+                    await self._checkpoint_document_progress(
+                        stats,
+                        document_manifest,
+                        metadata_index,
+                        manifest_changed=False,
+                    )
                 finally:
                     self._progress(f"docs:{category}", position, total)
 
         await asyncio.gather(
             *(worker(index, metadata) for index, metadata in enumerate(metadata_items, start=1))
         )
+
+    async def _checkpoint_document_progress(
+        self,
+        stats: CrawlStats,
+        document_manifest: set[str],
+        metadata_index: dict[str, LawMetadata],
+        *,
+        manifest_changed: bool,
+    ) -> None:
+        async with self._document_lock:
+            self._document_manifest_dirty = self._document_manifest_dirty or manifest_changed
+            self._document_since_flush += 1
+            if self._document_since_flush >= self.config.checkpoint_every:
+                if self._document_manifest_dirty:
+                    self.storage.write_document_manifest(document_manifest, metadata_index)
+                    self._document_manifest_dirty = False
+                self.logger.checkpoint(stats)
+                self._document_since_flush = 0
 
     def _finish(self, stats: CrawlStats) -> PipelineResult:
         paths = self.logger.flush(stats)
@@ -292,9 +356,29 @@ class CrawlerPipeline:
         counter = Counter(build_doc_filename(metadata.title or metadata.source_id) for metadata in metadata_items)
         return {name for name, count in counter.items() if count > 1}
 
-def normalize_categories(category_arg: str | None) -> list[str]:
-    if not category_arg or category_arg == "all":
-        return list(CATEGORY_ID_MAP)
-    if category_arg not in CATEGORY_ID_MAP:
-        raise ValueError(f"Unsupported category: {category_arg}")
-    return [category_arg]
+    def _matches_document_status(self, metadata: LawMetadata) -> bool:
+        status = metadata.status or ""
+        if self.config.status and status not in self.config.status:
+            return False
+        if self.config.status_except and status in self.config.status_except:
+            return False
+        return True
+
+
+def normalize_categories(category_args: Iterable[str] | str | None, *, exclude: Iterable[str] | None = None) -> list[str]:
+    if category_args is None:
+        selected = list(CATEGORY_ID_MAP)
+    elif isinstance(category_args, str):
+        selected = list(CATEGORY_ID_MAP) if category_args == "all" else [category_args]
+    else:
+        values = list(category_args)
+        selected = list(CATEGORY_ID_MAP) if not values or "all" in values else values
+    excluded = set(exclude or [])
+    unsupported = [category for category in selected if category not in CATEGORY_ID_MAP]
+    unsupported.extend(category for category in excluded if category not in CATEGORY_ID_MAP)
+    if unsupported:
+        raise ValueError(f"Unsupported category: {', '.join(sorted(set(unsupported)))}")
+    categories = [category for category in selected if category not in excluded]
+    if not categories:
+        raise ValueError("No categories selected.")
+    return categories

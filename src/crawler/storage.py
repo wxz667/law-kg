@@ -26,12 +26,15 @@ class CrawlerStorage:
         self.docs_dir = document_dir or self.data_root / "source" / "documents"
         self.metadata_dir = metadata_dir or self.data_root / "source" / "metadata"
         self.logs_dir = self.data_root.parent / "logs" / "crawler"
+        self.manifest_dir = self.data_root / "manifest" / "crawler"
+        self.document_manifest_path = self.manifest_dir / "documents.json"
         self.metadata_shard_size = max(int(metadata_shard_size), 1)
 
     def ensure_directories(self) -> None:
         self.docs_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.manifest_dir.mkdir(parents=True, exist_ok=True)
 
     def doc_path(self, metadata: LawMetadata, duplicate_filenames: set[str] | None = None) -> Path:
         duplicate_filenames = duplicate_filenames or set()
@@ -90,6 +93,24 @@ class CrawlerStorage:
         temp_path.write_bytes(content)
         temp_path.replace(path)
         return path
+
+    def load_document_manifest(self) -> set[str]:
+        if not self.document_manifest_path.exists():
+            return set()
+        payload = read_json(self.document_manifest_path)
+        if not isinstance(payload, dict):
+            return set()
+        rows = payload.get("source_ids", [])
+        if not isinstance(rows, list):
+            return set()
+        return {source_id for value in rows if (source_id := str(value).strip())}
+
+    def write_document_manifest(self, source_ids: set[str], metadata_index: dict[str, LawMetadata] | None = None) -> Path:
+        write_json(self.document_manifest_path, build_document_manifest_payload(source_ids, metadata_index or {}))
+        return self.document_manifest_path
+
+    def manifest_has_doc(self, metadata: LawMetadata, manifest: set[str]) -> bool:
+        return metadata.source_id in manifest
 
     def list_doc_paths(self) -> list[Path]:
         if not self.docs_dir.exists():
@@ -265,3 +286,28 @@ def parse_metadata_date(value: str | None) -> date:
         return date.fromisoformat(value.strip())
     except ValueError:
         return date.min
+
+
+def build_document_manifest_payload(
+    source_ids: set[str],
+    metadata_index: dict[str, LawMetadata],
+) -> dict[str, object]:
+    sorted_source_ids = sorted(source_ids)
+    category_counts: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
+    for source_id in sorted_source_ids:
+        metadata = metadata_index.get(source_id)
+        if metadata is None:
+            continue
+        if metadata.category:
+            category_counts[metadata.category] = category_counts.get(metadata.category, 0) + 1
+        if metadata.status:
+            status_counts[metadata.status] = status_counts.get(metadata.status, 0) + 1
+    return {
+        "stats": {
+            "document_count": len(sorted_source_ids),
+            "category_counts": dict(sorted(category_counts.items())),
+            "status_counts": dict(sorted(status_counts.items())),
+        },
+        "source_ids": sorted_source_ids,
+    }

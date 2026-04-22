@@ -79,9 +79,12 @@ scripts/crawler --category 法律 --data-root data
 
 常用参数：
 
-- `--category`: 单个分类名或 `all`，支持 `宪法`、`法律`、`行政法规`、`监察法规`、`地方法规`、`司法解释`
+- `--category`: 一个或多个分类名，或 `all`，支持 `宪法`、`法律`、`行政法规`、`监察法规`、`地方法规`、`司法解释`
+- `--category-except`: 从选中分类中排除一个或多个分类，metadata 和 document 阶段都生效
 - `--metadata`: 仅抓取元数据
 - `--document`: 仅下载文档
+- `--status`: document 阶段只处理指定状态，支持 `现行有效`、`已修改`、`已废止`、`尚未生效`
+- `--status-except`: document 阶段排除指定状态
 - `--overwrite`: 覆盖已存在的元数据和文档
 - `--limit`: 每个分类最多处理的记录数
 - `--data-root`: 覆盖 `crawler.data_root`，并在未显式传目录参数时使用 `{data-root}/source/metadata` 与 `{data-root}/source/documents`
@@ -94,9 +97,10 @@ scripts/crawler --category 法律 --data-root data
 
 - `crawler.metadata_dir` 指向的 `metadata-*.json`
 - `crawler.document_dir` 指向的 `*.docx`
+- `data/manifest/crawler/documents.json` 记录已下载 DOCX 的 `source_id` 清单、分类统计和状态统计
 - `logs/crawler/`
 
-`crawler` 会按标题生成合法文件名；标题重复时追加 `source_id` 后缀。元数据按标题去重，保留发布日期、生效日期和 `source_id` 排序更靠后的记录。
+`crawler` 会按标题生成合法文件名；标题重复时追加 `source_id` 后缀。元数据按标题去重，保留发布日期、生效日期和 `source_id` 排序更靠后的记录。文档下载阶段通过 `documents.json` 复用已有 DOCX；进度条总量仍按当前分类 metadata 候选总数显示，已在 manifest 中的文档计入 skipped。
 
 ## Builder 流水线
 
@@ -150,6 +154,23 @@ scripts/build \
   --category 法律
 ```
 
+按状态构建：
+
+```bash
+scripts/build \
+  --data-root data \
+  --status 现行有效
+```
+
+排除指定类别或状态后构建：
+
+```bash
+scripts/build \
+  --data-root data \
+  --category-except 地方法规 \
+  --status-except 已废止
+```
+
 构建全部已发现元数据：
 
 ```bash
@@ -180,6 +201,8 @@ scripts/build \
 ```
 
 `--rebuild` 会要求输入 `yes` 后继续。`--incremental` 是当前默认增量合并与复用行为的显式开关，代码中不附加额外语义。
+
+构建目标有三种互斥模式：`--source-id` 精确指定文档、`--all` 全量构建、或使用 metadata 过滤参数。过滤参数包括 `--category`、`--category-except`、`--status`、`--status-except`，其中 `--category` 和 `--status` 是包含范围，`--category-except` 和 `--status-except` 是排除范围。`--status` 可选值为 `现行有效`、`已修改`、`已废止`、`尚未生效`；`status: null` 或非标准状态不会被 `--status` 命中，但会在 `--status-except` 未明确排除时保留。
 
 也可以使用底层入口：
 

@@ -112,6 +112,9 @@ def build_knowledge_graph(
     data_root: Path | None = None,
     builder_config: BuilderConfig | None = None,
     category: str | list[str] | None = None,
+    category_except: str | list[str] | None = None,
+    status: str | list[str] | None = None,
+    status_except: str | list[str] | None = None,
     all_sources: bool = False,
     start_stage: str | None = None,
     through_stage: str = "infer",
@@ -131,6 +134,13 @@ def build_knowledge_graph(
     del incremental
     builder_config = builder_config or load_builder_config(data_override=data_root)
     data_root = builder_config.data
+    has_filter_scope = any(
+        normalize_filter_values(value) for value in (category, category_except, status, status_except)
+    )
+    selected_modes = int(source_id is not None) + int(bool(all_sources)) + int(has_filter_scope)
+    if selected_modes > 1:
+        raise ValueError("source_id, all_sources, and metadata filter scope arguments are mutually exclusive.")
+
     if source_id is not None:
         source_ids = [source_id] if isinstance(source_id, str) else list(source_id)
         source_path_label = (
@@ -138,15 +148,25 @@ def build_knowledge_graph(
             if len(source_ids) == 1
             else f"selected:{','.join(str(value).strip() for value in source_ids if str(value).strip())}"
         )
-    elif category is not None or all_sources:
-        source_ids = discover_source_ids(builder_config.metadata, category=category)
-        source_path_label = (
-            f"category:{','.join(category) if isinstance(category, list) else category}"
-            if category is not None
-            else "all"
+    elif all_sources:
+        source_ids = discover_source_ids(builder_config.metadata)
+        source_path_label = "all"
+    elif has_filter_scope:
+        source_ids = discover_source_ids(
+            builder_config.metadata,
+            category=category,
+            category_except=category_except,
+            status=status,
+            status_except=status_except,
+        )
+        source_path_label = describe_metadata_scope(
+            category=category,
+            category_except=category_except,
+            status=status,
+            status_except=status_except,
         )
     else:
-        raise ValueError("build_knowledge_graph requires source_id, category, or all_sources=True.")
+        raise ValueError("build_knowledge_graph requires source_id, all_sources=True, or metadata filters.")
     selected_source_ids = [str(value).strip() for value in source_ids if str(value).strip()]
     if not selected_source_ids:
         raise ValueError("build_knowledge_graph requires at least one discovered source_id.")
@@ -555,14 +575,20 @@ def resolve_terminal_stage_status(stats: dict[str, object]) -> str:
     return "completed"
 
 
-def discover_source_ids(metadata_root: Path, category: str | list[str] | None = None) -> list[str]:
+def discover_source_ids(
+    metadata_root: Path,
+    category: str | list[str] | None = None,
+    *,
+    category_except: str | list[str] | None = None,
+    status: str | list[str] | None = None,
+    status_except: str | list[str] | None = None,
+) -> list[str]:
     metadata_root = metadata_root.resolve()
     source_ids: list[str] = []
-    categories = (
-        {str(value).strip() for value in category if str(value).strip()}
-        if isinstance(category, list)
-        else ({str(category).strip()} if category else set())
-    )
+    categories = set(normalize_filter_values(category))
+    excluded_categories = set(normalize_filter_values(category_except))
+    statuses = set(normalize_filter_values(status))
+    excluded_statuses = set(normalize_filter_values(status_except))
     for path in sorted(metadata_root.glob("*.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, list):
@@ -570,12 +596,50 @@ def discover_source_ids(metadata_root: Path, category: str | list[str] | None = 
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            if categories and str(item.get("category", "")) not in categories:
+            item_category = metadata_filter_value(item.get("category"))
+            item_status = metadata_filter_value(item.get("status"))
+            if categories and item_category not in categories:
+                continue
+            if excluded_categories and item_category in excluded_categories:
+                continue
+            if statuses and item_status not in statuses:
+                continue
+            if excluded_statuses and item_status in excluded_statuses:
                 continue
             source_id = str(item.get("source_id", "")).strip()
             if source_id:
                 source_ids.append(source_id)
     return source_ids
+
+
+def normalize_filter_values(value: str | list[str] | None) -> list[str]:
+    if value is None:
+        return []
+    values = [value] if isinstance(value, str) else list(value)
+    return [text for item in values if (text := str(item).strip())]
+
+
+def metadata_filter_value(value: object) -> str:
+    return str(value or "").strip()
+
+
+def describe_metadata_scope(
+    *,
+    category: str | list[str] | None = None,
+    category_except: str | list[str] | None = None,
+    status: str | list[str] | None = None,
+    status_except: str | list[str] | None = None,
+) -> str:
+    parts = []
+    for label, values in (
+        ("category", normalize_filter_values(category)),
+        ("category-except", normalize_filter_values(category_except)),
+        ("status", normalize_filter_values(status)),
+        ("status-except", normalize_filter_values(status_except)),
+    ):
+        if values:
+            parts.append(f"{label}:{','.join(values)}")
+    return ";".join(parts) or "metadata-filter"
 
 
 def resolve_source_id(source_arg: str, metadata_root: Path) -> str:

@@ -5,15 +5,15 @@
     "metadata_dir": "data/source/metadata",
     "document_dir": "data/source/documents",
     "metadata_shard_size": 5000,
-    "concurrency": 2,
+    "concurrency": 4,
     "retries": 3,
     "timeout": 10.0,
-    "request_delay": 0.3,
-    "request_jitter": 0.5,
+    "request_delay": 0.1,
+    "request_jitter": 0.1,
     "warmup_timeout": 5.0,
     "bootstrap_api_probe": false,
     "page_size": 100,
-    "checkpoint_every": 100
+    "checkpoint_every": 50
   },
   "builder": {
     "data": "data",

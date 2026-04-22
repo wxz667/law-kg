@@ -24,6 +24,7 @@ data/
     interprets_filter/
   manifest/
     builder/
+    crawler/
   train/
     interprets_filter/
   exports/
@@ -66,6 +67,25 @@ data/
 - 文件名通常来自文档标题
 - 标题重复时 crawler 会追加 `__{source_id 后 12 位}` 后缀
 - builder 以 metadata 的 `source_id` 为逻辑处理单位，不以文件名作为主键
+- crawler 以 `manifest/crawler/documents.json` 记录已下载 DOCX 的 `source_id` 清单，文档下载复用该 manifest 判断已存在产物
+
+## manifest/crawler
+
+`manifest/crawler/` 保存 crawler 已落盘源数据产物清单。它描述当前磁盘累计产物，不保存单次抓取状态。
+
+```text
+manifest/crawler/
+  documents.json
+```
+
+`documents.json` 是当前 DOCX 产物 manifest：
+
+- `stats.document_count`: 当前已登记 DOCX 数量
+- `stats.category_counts`: 当前已登记 DOCX 按 metadata `category` 统计的数量
+- `stats.status_counts`: 当前已登记 DOCX 按 metadata `status` 统计的数量
+- `source_ids[]`: 已下载 DOCX 对应的 metadata `source_id`
+
+下载阶段信任该 manifest 进行复用；成功下载新文档时同步写入 manifest。manifest 不记录 pending、failed、retry 等单次运行状态。
 
 ## intermediate/builder
 
