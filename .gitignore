@@ -23,3 +23,51 @@ utils/neo4j/plugins/**
 !utils/neo4j/plugins/.gitkeep
 tests/
 *.pdf
+
+# Web app infrastructure data (Docker volumes)
+web-app/infra/postgres/data/**
+!web-app/infra/postgres/data/
+!web-app/infra/postgres/data/.gitkeep
+web-app/infra/neo4j/data/**
+!web-app/infra/neo4j/data/
+!web-app/infra/neo4j/data/.gitkeep
+web-app/infra/neo4j/logs/**
+!web-app/infra/neo4j/logs/
+!web-app/infra/neo4j/logs/.gitkeep
+web-app/infra/neo4j/plugins/**
+!web-app/infra/neo4j/plugins/
+!web-app/infra/neo4j/plugins/.gitkeep
+web-app/infra/elasticsearch/data/**
+!web-app/infra/elasticsearch/data/
+!web-app/infra/elasticsearch/data/.gitkeep
+
+# Infrastructure data (for legacy structure)
+infra/postgres/data/**
+!infra/postgres/data/
+!infra/postgres/data/.gitkeep
+infra/neo4j/data/**
+!infra/neo4j/data/
+!infra/neo4j/data/.gitkeep
+infra/neo4j/logs/**
+!infra/neo4j/logs/
+!infra/neo4j/logs/.gitkeep
+infra/elasticsearch/data/**
+!infra/elasticsearch/data/
+!infra/elasticsearch/data/.gitkeep
+
+# Node modules
+node_modules/
+
+# Frontend build output
+web-app/frontend/dist/
+
+# Backend virtual environments
+backend/**/venv/
+backend/**/.venv/
+web-app/backend/**/venv/
+web-app/backend/**/.venv/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.iml

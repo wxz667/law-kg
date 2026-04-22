@@ -1,0 +1,17 @@
+{
+  "relation_types": [
+    "REFERS_TO",
+    "INTERPRETS",
+    "AMENDS",
+    "REPEALS",
+    "NONE"
+  ],
+  "source_node_types": [
+    "DocumentNode",
+    "ProvisionNode"
+  ],
+  "target_node_types": [
+    "DocumentNode",
+    "ProvisionNode"
+  ]
+}
